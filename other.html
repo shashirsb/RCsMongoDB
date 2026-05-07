@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>MongoDB Multi-Region Failover Simulator</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Source+Code+Pro:wght@400;600&display=swap" rel="stylesheet">
+
+<style>
+
+body{
+font-family:Inter;
+background:#F9FBFA;
+}
+
+.log{
+font-family:"Source Code Pro";
+font-size:11px;
+}
+
+.node{
+transition:.4s;
+}
+
+.primary{
+background:#001E2B;
+color:white;
+border:2px solid #00ED64;
+}
+
+.secondary{
+background:white;
+border:1px solid #E8EDEB;
+}
+
+.down{
+background:#eee;
+opacity:.4;
+}
+
+.region{
+border:1px solid #E8EDEB;
+border-radius:12px;
+padding:10px;
+min-height:160px;
+background:white;
+}
+
+</style>
+
+</head>
+
+<body class="p-6">
+
+<div class="max-w-7xl mx-auto">
+
+<div class="flex justify-between mb-6">
+
+<h1 class="text-2xl font-bold text-[#001E2B]">
+MongoDB Replica Set Failover Simulator
+</h1>
+
+<div class="flex gap-3 flex-wrap">
+
+<select id="topology" class="border px-3 py-2 rounded">
+
+<option value="3-single">
+3 Nodes — Single Region
+</option>
+
+<option value="3-two">
+3 Nodes — Two Regions (2-1)
+</option>
+
+<option value="3-three">
+3 Nodes — Three Regions (1-1-1)
+</option>
+
+<option value="5-three">
+5 Nodes — Three Regions (2-2-1)
+</option>
+
+</select>
+
+<button onclick="failRegion('A')" class="bg-red-600 text-white px-3 py-2 rounded">
+Fail Region A
+</button>
+
+<button onclick="failRegion('B')" class="bg-red-600 text-white px-3 py-2 rounded">
+Fail Region B
+</button>
+
+<button onclick="failRegion('C')" class="bg-red-600 text-white px-3 py-2 rounded">
+Fail Region C
+</button>
+
+<button onclick="recoverAll()" class="bg-green-600 text-white px-3 py-2 rounded">
+Recover All
+</button>
+
+</div>
+
+</div>
+
+
+<!-- majority panel -->
+
+<div class="grid grid-cols-3 gap-4 mb-6">
+
+<div class="bg-white p-4 rounded border">
+<div class="text-xs text-gray-400">Total Nodes</div>
+<div id="totalNodes" class="font-bold text-xl">3</div>
+</div>
+
+<div class="bg-white p-4 rounded border">
+<div class="text-xs text-gray-400">Online Nodes</div>
+<div id="onlineNodes" class="font-bold text-xl">3</div>
+</div>
+
+<div class="bg-white p-4 rounded border">
+<div class="text-xs text-gray-400">Majority Required</div>
+<div id="majorityNodes" class="font-bold text-xl">2</div>
+</div>
+
+</div>
+
+
+<!-- regions -->
+
+<div class="grid grid-cols-3 gap-4">
+
+<div>
+
+<div class="font-bold mb-2">
+Region A
+</div>
+
+<div id="regionA" class="region"></div>
+
+</div>
+
+<div>
+
+<div class="font-bold mb-2">
+Region B
+</div>
+
+<div id="regionB" class="region"></div>
+
+</div>
+
+<div>
+
+<div class="font-bold mb-2">
+Region C
+</div>
+
+<div id="regionC" class="region"></div>
+
+</div>
+
+</div>
+
+
+<!-- election panel -->
+
+<div class="bg-white p-4 mt-6 rounded border">
+
+<div class="flex justify-between">
+
+<div>
+
+<div class="text-xs text-gray-400">
+Election Timer
+</div>
+
+<div id="timer" class="text-3xl font-bold text-red-600">
+READY
+</div>
+
+</div>
+
+<div>
+
+<div class="text-xs text-gray-400">
+Cluster Status
+</div>
+
+<div id="status" class="font-bold text-green-600">
+PRIMARY HEALTHY
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+
+<!-- log -->
+
+<div class="bg-white p-4 mt-6 rounded border">
+
+<div class="font-bold mb-2">
+Election Timeline
+</div>
+
+<div id="log"
+class="log h-48 overflow-auto bg-black text-green-400 p-2 rounded">
+</div>
+
+</div>
+
+
+</div>
+
+
+<script>
+
+
+let nodes=[]
+
+let timer=null
+
+
+function init()
+{
+
+const t=document.getElementById("topology").value
+
+nodes=[]
+
+
+if(t==="3-single")
+{
+
+nodes=[
+{id:"A1",region:"A",priority:2,alive:true,role:"PRIMARY"},
+{id:"A2",region:"A",priority:1,alive:true,role:"SECONDARY"},
+{id:"A3",region:"A",priority:1,alive:true,role:"SECONDARY"},
+]
+
+}
+
+
+if(t==="3-two")
+{
+
+nodes=[
+{id:"A1",region:"A",priority:2,alive:true,role:"PRIMARY"},
+{id:"A2",region:"A",priority:1,alive:true,role:"SECONDARY"},
+{id:"B1",region:"B",priority:1,alive:true,role:"SECONDARY"},
+]
+
+}
+
+
+if(t==="3-three")
+{
+
+nodes=[
+{id:"A1",region:"A",priority:2,alive:true,role:"PRIMARY"},
+{id:"B1",region:"B",priority:1,alive:true,role:"SECONDARY"},
+{id:"C1",region:"C",priority:1,alive:true,role:"SECONDARY"},
+]
+
+}
+
+
+if(t==="5-three")
+{
+
+nodes=[
+{id:"A1",region:"A",priority:2,alive:true,role:"PRIMARY"},
+{id:"A2",region:"A",priority:1,alive:true,role:"SECONDARY"},
+
+{id:"B1",region:"B",priority:1,alive:true,role:"SECONDARY"},
+{id:"B2",region:"B",priority:1,alive:true,role:"SECONDARY"},
+
+{id:"C1",region:"C",priority:.5,alive:true,role:"SECONDARY"},
+]
+
+}
+
+
+render()
+
+updateMajority()
+
+log("Topology initialized")
+
+}
+
+
+
+function render()
+{
+
+["A","B","C"].forEach(r=>{
+
+document.getElementById("region"+r).innerHTML=""
+
+})
+
+
+nodes.forEach(n=>{
+
+const el=document.createElement("div")
+
+el.className=
+"node p-2 mb-2 rounded "+
+(
+!n.alive?"down":
+n.role==="PRIMARY"?"primary":"secondary"
+)
+
+el.innerHTML=
+"<b>"+n.id+"</b><br>"+
+"Priority:"+n.priority+"<br>"+
+"Role:"+n.role
+
+document.getElementById("region"+n.region).appendChild(el)
+
+})
+
+}
+
+
+
+function updateMajority()
+{
+
+const total=nodes.length
+
+const online=nodes.filter(n=>n.alive).length
+
+const majority=Math.floor(total/2)+1
+
+
+document.getElementById("totalNodes").innerText=total
+
+document.getElementById("onlineNodes").innerText=online
+
+document.getElementById("majorityNodes").innerText=majority
+
+}
+
+
+
+function log(msg)
+{
+
+const t=new Date().toLocaleTimeString()
+
+document.getElementById("log").innerHTML=
+"["+t+"] "+msg+"<br>"+
+document.getElementById("log").innerHTML
+
+}
+
+
+
+function failRegion(region)
+{
+
+nodes.forEach(n=>{
+if(n.region===region)
+n.alive=false
+})
+
+
+log("Region "+region+" failed")
+
+startElection()
+
+render()
+
+updateMajority()
+
+}
+
+
+
+function recoverAll()
+{
+
+nodes.forEach(n=>{
+n.alive=true
+})
+
+
+nodes.forEach(n=>{
+n.role="SECONDARY"
+})
+
+
+nodes[0].role="PRIMARY"
+
+
+clearInterval(timer)
+
+
+document.getElementById("timer").innerText="READY"
+
+document.getElementById("status").innerText="PRIMARY HEALTHY"
+
+document.getElementById("status").className="font-bold text-green-600"
+
+
+render()
+
+updateMajority()
+
+log("Cluster recovered")
+
+}
+
+
+
+function startElection()
+{
+
+let count=5
+
+
+document.getElementById("status").innerText="ELECTION RUNNING"
+
+document.getElementById("status").className="font-bold text-red-600"
+
+
+document.getElementById("timer").innerText=count+"s"
+
+
+log("Election triggered")
+
+
+timer=setInterval(()=>{
+
+count--
+
+document.getElementById("timer").innerText=count+"s"
+
+
+if(count===0)
+{
+
+clearInterval(timer)
+
+elect()
+
+}
+
+},1000)
+
+}
+
+
+
+function elect()
+{
+
+const alive=nodes.filter(n=>n.alive)
+
+const majority=Math.floor(nodes.length/2)+1
+
+
+if(alive.length<majority)
+{
+
+document.getElementById("status").innerText="NO PRIMARY"
+
+log("No majority — writes blocked")
+
+return
+
+}
+
+
+alive.sort((a,b)=>b.priority-a.priority)
+
+
+nodes.forEach(n=>{
+n.role="SECONDARY"
+})
+
+
+alive[0].role="PRIMARY"
+
+
+document.getElementById("status").innerText="PRIMARY ELECTED"
+
+document.getElementById("status").className="font-bold text-green-600"
+
+
+log(alive[0].id+" elected PRIMARY")
+
+
+render()
+
+}
+
+
+
+document.getElementById("topology").onchange=init
+
+
+init()
+
+
+</script>
+
+
+</body>
+</html>

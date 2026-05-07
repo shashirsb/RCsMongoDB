@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ACID Contention Lab | LeafyBank FSI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Inter:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root { --mongo-green: #00ED64; --mongo-dark: #001E2B; --blue-action: #016BFF; --border: #E2E8F0; }
+        body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; color: var(--mongo-dark); height: 100vh; overflow: hidden; margin: 0; display: flex; flex-direction: column; }
+        .mono { font-family: 'Source Code Pro', monospace; }
+        
+        .white-panel { background: white; border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.04); border-radius: 2rem; }
+        
+        /* ACID Property Tags */
+        .acid-badge { padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; transition: all 0.4s ease; opacity: 0.3; border: 1px solid #CBD5E0; color: #64748B; }
+        .acid-active { opacity: 1; border-color: var(--mongo-green); color: #065F46; background: #ECFDF5; transform: translateY(-2px); }
+
+        /* Code Highlighting */
+        .code-line { transition: all 0.2s ease; border-left: 4px solid transparent; padding-left: 12px; margin-bottom: 2px; opacity: 0.4; color: #94A3B8; }
+        .code-highlight { opacity: 1 !important; border-left-color: var(--mongo-green); background: rgba(255,255,255,0.05); color: #FFFFFF !important; }
+
+        /* Account States */
+        .account-box { transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1); border: 2px solid #F1F5F9; background: white; position: relative; }
+        .locked-a { border-color: var(--blue-action); background: #EFF6FF; }
+        .locked-c { border-color: #8B5CF6; background: #F5F3FF; }
+        .committed { border-color: var(--mongo-green); background: #F0FDF4; }
+        .aborted { border-color: #EF4444; background: #FEF2F2; animation: shake 0.4s ease-in-out; }
+        
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+
+        /* Thread B Specialized Alert */
+        .thread-tag { position: absolute; left: 50%; transform: translateX(-50%); padding: 8px 15px; border-radius: 12px; font-size: 10px; font-weight: 900; box-shadow: 0 10px 20px rgba(0,0,0,0.1); opacity: 0; transition: 0.5s; z-index: 100; width: 220px; text-align: center; }
+        .thread-active { opacity: 1; transform: translate(-50%, -15px); }
+        .bg-thread-b { background: #F59E0B; color: white; top: -55px; }
+        .bg-thread-c { background: #8B5CF6; color: white; top: -55px; }
+
+        /* Toggle Switch */
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #10B981; transition: .4s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #EF4444; }
+        input:checked + .slider:before { transform: translateX(26px); }
+
+        .custom-scroll::-webkit-scrollbar { width: 5px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 10px; }
+    </style>
+</head>
+<body class="p-6">
+
+    <header class="flex justify-between items-center mb-6 px-8 py-5 white-panel">
+        <div class="flex items-center gap-8">
+            <a href="acidinfo.html" class="w-12 h-12 bg-slate-100 hover:bg-slate-200 rounded-2xl flex items-center justify-center transition-all group">
+                <span class="text-xl group-hover:-translate-x-1 transition-transform">←</span>
+            </a>
+            <div class="flex items-center gap-5 border-l pl-8">
+                <div class="w-14 h-14 bg-green-500 rounded-2xl flex items-center justify-center shadow-lg">
+                    <span class="text-white font-black text-2xl">A</span>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-black uppercase tracking-tighter italic">ACID <span class="text-green-600">Contention Hub</span></h1>
+                    <div class="flex items-center gap-3 mt-1">
+                        <label class="switch">
+                            <input type="checkbox" id="scenario-toggle">
+                            <span class="slider"></span>
+                        </label>
+                        <span id="toggle-label" class="text-[10px] font-black uppercase text-emerald-600 tracking-widest">Commit Scenario</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex gap-3">
+            <div id="badge-A" class="acid-badge">Atomicity</div>
+            <div id="badge-C" class="acid-badge">Consistency</div>
+            <div id="badge-I" class="acid-badge">Isolation</div>
+            <div id="badge-D" class="acid-badge">Durability</div>
+        </div>
+
+        <div class="flex gap-4">
+            <button onclick="resetLab()" class="px-8 py-3 rounded-2xl font-bold text-xs uppercase border border-slate-200 hover:bg-slate-50 transition">Reset</button>
+            <button onclick="nextStep()" id="next-btn" class="bg-slate-900 text-white px-10 py-3 rounded-2xl font-black text-xs uppercase hover:bg-red-600 transition-all shadow-xl">
+                Execute Next Step →
+            </button>
+        </div>
+    </header>
+
+    <section class="grid grid-cols-3 gap-6 mb-6 px-2">
+        <div class="bg-blue-50/50 border border-blue-100 p-4 rounded-3xl">
+            <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                <span class="text-[10px] font-black text-blue-600 uppercase tracking-widest">Thread A: Transfer Service</span>
+            </div>
+            <p class="text-[11px] text-blue-800 leading-tight">Attempts to move $200 from Acc_01 to Acc_02. It has a 5s limit to acquire all necessary locks.</p>
+        </div>
+        <div class="bg-amber-50/50 border border-amber-100 p-4 rounded-3xl">
+            <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full bg-amber-500"></div>
+                <span class="text-[10px] font-black text-amber-600 uppercase tracking-widest">Thread B: Autopay Worker</span>
+            </div>
+            <p class="text-[11px] text-amber-800 leading-tight">Needs to debit $150 from Acc_01.</p>
+        </div>
+        <div class="bg-purple-50/50 border border-purple-100 p-4 rounded-3xl">
+            <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full bg-purple-500"></div>
+                <span class="text-[10px] font-black text-purple-600 uppercase tracking-widest">Thread C: Maintenance Job</span>
+            </div>
+            <p class="text-[11px] text-purple-800 leading-tight">Credit $200 to Acc_02.</p>
+        </div>
+    </section>
+
+    <main class="flex-1 grid grid-cols-12 gap-6 overflow-hidden">
+        
+        <aside class="col-span-5 flex flex-col h-full gap-6 overflow-hidden">
+            <div class="flex-1 bg-[#001E2B] rounded-[2rem] p-8 flex flex-col overflow-hidden relative border border-white/5">
+                <div class="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+                    <h3 class="text-[11px] font-black uppercase text-red-400 tracking-[0.2em]">Transaction (Thread A)</h3>
+                    <div id="timeout-ui" class="hidden text-red-500 font-black mono text-xs animate-pulse">LOCK TIMEOUT: <span id="timer-val">5.0</span>s</div>
+                </div>
+                <div class="mono text-[11px] leading-relaxed overflow-y-auto custom-scroll h-full" id="code-monitor">
+                    <div class="code-line" id="line-1">const session = client.startSession();</div>
+                    <div class="code-line" id="line-2">session.startTransaction({ </div>
+                    <div class="code-line pl-4" id="line-3">&nbsp;&nbsp;maxTransactionLockRequestTimeoutMillis: 5000 </div>
+                    <div class="code-line" id="line-4">});</div>
+                    <div class="code-line mt-4" id="line-7">await accounts.updateOne(</div>
+                    <div class="code-line pl-4" id="line-8">&nbsp;&nbsp;{ id: 'Acc_01' }, { $inc: { bal: -200 } }, { session }</div>
+                    <div class="code-line" id="line-9">); // ACQUIRED LOCK</div>
+                    <div class="code-line mt-2" id="line-10">await accounts.updateOne(</div>
+                    <div class="code-line pl-4" id="line-11">&nbsp;&nbsp;{ id: 'Acc_02' }, { $inc: { bal: 200 } }, { session }</div>
+                    <div class="code-line" id="line-12">); // WAITING ON THREAD C</div>
+                    <div class="code-line mt-4 text-emerald-500 font-bold" id="line-13">await session.commitTransaction();</div>
+                    <div class="code-line text-red-500 font-bold" id="line-15">await session.abortTransaction(); // EXCEPTION</div>
+                </div>
+            </div>
+
+            <div class="flex-1 white-panel p-8 overflow-hidden flex flex-col border-t-8 border-t-green-500">
+                <h3 class="text-[11px] font-black uppercase text-red-600 mb-4 tracking-[0.2em] border-b pb-3">Technical Breakdown</h3>
+                <div id="post-mortem" class="flex-1 overflow-y-auto text-xs leading-relaxed text-slate-600 space-y-4 custom-scroll">
+                    <p class="italic text-slate-400">Initialize the sequence to see how MongoDB handles blocking chains and timeout limits.</p>
+                </div>
+            </div>
+        </aside>
+
+        <div class="col-span-7 flex flex-col h-full gap-6 overflow-hidden">
+            <div id="canvas" class="flex-[1.2] white-panel p-12 relative flex flex-col justify-between overflow-hidden">
+                <div class="flex justify-around items-center w-full mt-6 relative">
+                    <div id="acc-1" class="account-box p-10 w-80 text-center rounded-[2.5rem] shadow-sm">
+                        <div id="thread-b-alert" class="thread-tag bg-thread-b">THREAD B: RETRYING...</div>
+                        <span class="text-[10px] font-black text-slate-400 uppercase block mb-1">Acc_01</span>
+                        <div class="text-6xl font-black mono italic text-slate-900" id="bal-1">$1,000</div>
+                        <div id="delta-1" class="text-red-500 font-bold h-6 mt-6 text-xl"></div>
+                    </div>
+
+                    <div class="flex flex-col items-center">
+                        <svg class="w-12 h-12 text-slate-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    </div>
+
+                    <div id="acc-2" class="account-box p-10 w-80 text-center rounded-[2.5rem] shadow-sm">
+                        <div id="thread-c-alert" class="thread-tag bg-thread-c">THREAD C: HOLDING LOCK</div>
+                        <span class="text-[10px] font-black text-slate-400 uppercase block mb-1">Acc_02</span>
+                        <div class="text-6xl font-black mono italic text-slate-900" id="bal-2">$500</div>
+                        <div id="delta-2" class="text-emerald-500 font-bold h-6 mt-6 text-xl"></div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col items-center w-full max-w-2xl mx-auto gap-4 text-center">
+                    <div>
+                        <h4 id="nar-title" class="text-lg font-black text-slate-900 mb-1">System Ready</h4>
+                        <p id="nar-body" class="text-slate-500 text-sm italic">Execute Step 1 to begin the contention simulation.</p>
+                    </div>
+                    <div class="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+                        <div id="tx-progress" class="h-full bg-red-500 w-0 transition-all duration-700"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 white-panel p-8 overflow-hidden flex flex-col border-t-8 border-t-slate-800 bg-[#0F172A] text-slate-300">
+                <h3 class="text-[10px] font-black uppercase text-slate-500 border-b border-slate-700 pb-3 mb-4 tracking-[0.2em]">Internal Multi-Version Concurrency Control (MVCC) Log</h3>
+                <div id="telemetry" class="flex-1 overflow-y-auto mono text-[11px] space-y-2 pr-2 custom-scroll"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let currentStep = 0;
+        let balances = { one: 1000, two: 500 };
+        let timerInt;
+
+        document.getElementById('scenario-toggle').addEventListener('change', (e) => {
+            const label = document.getElementById('toggle-label');
+            label.innerText = e.target.checked ? "Timeout Abort Flow" : "Commit Scenario";
+            label.className = e.target.checked ? "text-[10px] font-black uppercase text-red-500 tracking-widest" : "text-[10px] font-black uppercase text-emerald-600 tracking-widest";
+        });
+
+        function nextStep() {
+            currentStep++;
+            const isAbortFlow = document.getElementById('scenario-toggle').checked;
+
+            switch(currentStep) {
+                case 1:
+                    highlightCode([1,2,3,4]);
+                    activateBadge('A'); activateBadge('C');
+                    updateNarrative("The Contention Baseline", "Thread A starts with 5s timeout. Thread C is already holding an exclusive lock on Acc_02 for background processing.");
+                    document.getElementById('acc-2').classList.add('locked-c');
+                    document.getElementById('thread-c-alert').classList.add('thread-active');
+                    addLog("MVCC: Thread C acquired X-Lock on Acc_02. Thread A session started.", "text-purple-400");
+                    document.getElementById('tx-progress').style.width = '25%';
+                    break;
+                case 2:
+                    highlightCode([7,8,9]);
+                    activateBadge('I');
+                    document.getElementById('acc-1').classList.add('locked-a');
+                    document.getElementById('delta-1').innerText = "-$200";
+                    updateNarrative("Lock Hierarchy", "Thread A claims Acc_01. Thread B (Autopay) arrives to debit Acc_01 but is BLOCKED by Thread A's lock.");
+                    addLog("LOCK: Thread A granted X-Lock on Acc_01.", "text-blue-400 font-bold");
+                    setTimeout(() => {
+                        document.getElementById('thread-b-alert').classList.add('thread-active');
+                        addLog("LOCK_WAIT: Thread B waiting for Acc_01 release...", "text-orange-400 italic");
+                    }, 400);
+                    document.getElementById('tx-progress').style.width = '50%';
+                    break;
+                case 3:
+                    highlightCode([10,11,12]);
+                    updateNarrative("The Wait Loop", "Thread A attempts to update Acc_02. It hits a wall: Thread C's lock. The 5-second countdown begins.");
+                    addLog("WAIT_QUEUE: Thread A blocked on Acc_02 by Thread C.", "text-red-400 animate-pulse");
+                    startTimer(isAbortFlow);
+                    document.getElementById('tx-progress').style.width = '75%';
+                    break;
+                case 4:
+                    finalize(isAbortFlow);
+                    break;
+            }
+        }
+
+        function startTimer(isAbort) {
+            document.getElementById('timeout-ui').classList.remove('hidden');
+            let timeLeft = 5.0;
+            timerInt = setInterval(() => {
+                timeLeft -= 0.1;
+                document.getElementById('timer-val').innerText = timeLeft.toFixed(1);
+                if (timeLeft <= 0) {
+                    clearInterval(timerInt);
+                    if (isAbort) document.getElementById('next-btn').click();
+                }
+            }, 100);
+        }
+
+        function finalize(isAbort) {
+            const threadB = document.getElementById('thread-b-alert');
+            const threadC = document.getElementById('thread-c-alert');
+
+            if (isAbort) {
+                // ABORT LOGIC
+                highlightCode([15]);
+                document.getElementById('acc-1').className = "account-box p-10 w-80 text-center rounded-[2.5rem] aborted";
+                updateNarrative("Thread A Aborted (Lock Timeout)", "Thread A hit the 5000ms limit. MongoDB killed it to prevent system stall. Locks released! Watch Thread B...", "text-red-600");
+                addLog("EXCEPTION: maxTransactionLockRequestTimeout reached. Thread A aborted.", "text-red-500 font-black");
+
+                setTimeout(() => {
+                    balances.one -= 150; updateBalances();
+                    threadB.className = "thread-tag bg-thread-b thread-active bg-emerald-500";
+                    threadB.innerText = "THREAD B: SUCCESS ($1000 -> $850)";
+                    addLog("RESOLVE: Thread B acquired released lock on Acc_01.", "text-emerald-500 font-bold");
+                    showAnalysis('abort');
+                }, 1000);
+
+            } else {
+                // COMMIT LOGIC
+                clearInterval(timerInt);
+                highlightCode([13]);
+                activateBadge('D');
+                balances.one -= 200; balances.two += 200; updateBalances();
+                
+                document.querySelectorAll('.account-box').forEach(b => b.className = "account-box p-10 w-80 text-center rounded-[2.5rem] committed shadow-lg");
+                threadC.classList.remove('thread-active');
+                
+                updateNarrative("Thread C Released Lock: Success", "Thread C finished its task just in time. Thread A acquired the lock, committed, and released both docs for Thread B.", "text-emerald-600");
+                addLog("COMMIT: Transaction(A) succeeded. All locks cleared.", "text-emerald-500 font-black");
+
+                setTimeout(() => {
+                    balances.one -= 150; updateBalances();
+                    threadB.className = "thread-tag bg-thread-b thread-active bg-emerald-500";
+                    threadB.innerText = "THREAD B: SUCCESS AFTER WAIT";
+                    addLog("RETRY: Thread B detected balance update ($800) and completed.", "text-emerald-500");
+                    showAnalysis('success');
+                }, 1000);
+            }
+
+            document.getElementById('tx-progress').style.width = '100%';
+            document.getElementById('next-btn').disabled = true;
+            document.getElementById('next-btn').innerText = "Simulation End";
+        }
+
+        function showAnalysis(type) {
+            const pm = document.getElementById('post-mortem');
+            pm.innerHTML = "";
+            if (type === 'abort') {
+                pm.innerHTML = `
+                    <div class="bg-red-50 p-4 rounded-xl border border-red-100 text-red-800">
+                        <p class="font-bold">Scenario: Resource Contention Timeout</p>
+                        <p class="mt-2">Because Thread C held Acc_02 too long, Thread A hit its limit. MongoDB forcefully rolled back Thread A. This release allowed Thread B to finish its autopay immediately using the original balance.</p>
+                    </div>`;
+            } else {
+                pm.innerHTML = `
+                    <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-100 text-emerald-800">
+                        <p class="font-bold">Scenario: Optimistic Reconciliation</p>
+                        <p class="mt-2">Thread C released the lock before the 5s timer expired. Thread A completed its bank transfer. Thread B then re-read the updated $800 balance and successfully applied the CC autopay.</p>
+                    </div>`;
+            }
+        }
+
+        function resetLab() {
+            clearInterval(timerInt);
+            currentStep = 0;
+            document.querySelectorAll('.acid-badge').forEach(b => b.classList.remove('acid-active'));
+            document.querySelectorAll('.account-box').forEach(b => b.className = "account-box p-10 w-80 text-center rounded-[2.5rem] relative shadow-sm");
+            document.querySelectorAll('.code-line').forEach(el => el.classList.remove('code-highlight'));
+            document.getElementById('thread-b-alert').className = "thread-tag bg-thread-b";
+            document.getElementById('thread-b-alert').innerText = "THREAD B: RETRYING...";
+            document.getElementById('thread-c-alert').classList.remove('thread-active');
+            document.getElementById('timeout-ui').classList.add('hidden');
+            document.getElementById('delta-1').innerText = ""; document.getElementById('delta-2').innerText = "";
+            balances = { one: 1000, two: 500 }; updateBalances();
+            document.getElementById('tx-progress').style.width = '0%';
+            document.getElementById('next-btn').disabled = false;
+            document.getElementById('next-btn').innerHTML = 'Execute Next Step →';
+            document.getElementById('telemetry').innerHTML = "";
+            document.getElementById('post-mortem').innerHTML = '<p class="italic text-slate-400">Initialize sequence to observe the impact of contention...</p>';
+            updateNarrative("System Ready", "Execute Step 1 to begin the contention simulation.");
+        }
+
+        function highlightCode(lines) {
+            document.querySelectorAll('.code-line').forEach(el => el.classList.remove('code-highlight'));
+            lines.forEach(num => document.getElementById(`line-${num}`).classList.add('code-highlight'));
+        }
+
+        function updateNarrative(title, body, clr = "text-slate-900") {
+            document.getElementById('nar-title').innerText = title;
+            document.getElementById('nar-title').className = `text-lg font-black mb-1 ${clr}`;
+            document.getElementById('nar-body').innerText = body;
+        }
+
+        function updateBalances() {
+            document.getElementById('bal-1').innerText = `$${balances.one.toLocaleString()}`;
+            document.getElementById('bal-2').innerText = `$${balances.two.toLocaleString()}`;
+        }
+
+        function activateBadge(id) {
+            document.getElementById(`badge-${id}`).classList.add('acid-active');
+        }
+
+        function addLog(msg, color) {
+            const div = document.createElement('div');
+            div.className = `${color} border-l-2 pl-3 border-current leading-tight`;
+            div.innerHTML = `> [${new Date().toLocaleTimeString()}] ${msg}`;
+            document.getElementById('telemetry').prepend(div);
+        }
+    </script>
+</body>
+</html>

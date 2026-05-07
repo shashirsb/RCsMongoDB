@@ -1,0 +1,311 @@
+Below is a **conceptual-but-detailed walkthrough** of how MongoDB backup/restore, checkpoints, and continuous backup work, broken down by the main architectures we actually use: **Atlas Cloud Backup + Continuous Cloud Backup**, and **Ops Manager/Cloud Manager continuous backup** for self-managed deployments. I’ll also call out the underlying **storage-engine and oplog components** that make it work.
+
+---
+
+## 0. Core building blocks (common to Atlas & Ops Manager)
+
+These are the primitives all the higher-level backup systems sit on top of:
+
+1. **Replica set**
+   - At least one **primary** and one or more **secondaries**.
+   - All writes go to the primary, which records them in the **oplog** (local collection `local.oplog.rs`).
+   - Secondaries **tail the primary’s oplog** and apply operations in order.
+
+2. **WiredTiger checkpoints (storage-engine level)**
+   - WiredTiger periodically creates **on-disk checkpoints** of the data files.  
+   - A checkpoint is a **consistent snapshot of the database on disk**; crash recovery uses the combination of **checkpoint + journal** to get back to a consistent state after unclean shutdown.
+   - This is **local crash recovery**, not a backup you can keep off the machine, but backups rely on the fact that data files + journal form a valid, consistent image.
+
+3. **Journal**
+   - Before acknowledging a write, WiredTiger persists it in the **journal** (write-ahead log).
+   - On restart / restore from snapshots, MongoDB replays journal entries newer than the last checkpoint to guarantee consistency.
+
+4. **Oplog (for PITR & continuous backup)**
+   - The **oplog** is an ordered log of all replication operations.
+   - Continuous backup systems (Atlas Continuous Cloud Backup, Ops Manager/Cloud Manager) **copy the oplog stream** to separate storage so they can **replay it later to reconstruct any point in time** within a configured window.
+
+---
+
+## 1. Atlas Cloud Backup – periodic snapshots
+
+### Components
+
+- **Cluster**: replica set or sharded cluster in Atlas.
+- **Snapshot worker / backup service** (inside Atlas).
+- **Cloud storage**:  
+  - AWS: EBS + S3  
+  - Azure: Managed Disks + Blob  
+  - GCP: Persistent Disks + GCS
+
+### How backup (snapshot) works – step by step
+
+1. **Policy definition**
+   - You configure a **Backup Policy** (frequency + retention, e.g. hourly for 48h, daily for 35 days, etc.).
+   - For dedicated clusters, you can also enable **Continuous Cloud Backup** (covered later) on top of snapshots.
+
+2. **Snapshot selection of member**
+   - Atlas automatically chooses a **lower-priority replica-set member** (typically the lowest-priority node in the highest-priority region) to take snapshots from, so that impact on the primary is minimized.
+
+3. **Snapshot creation**
+   - Atlas uses the **cloud provider’s native snapshot capability**:
+     - EBS snapshots (AWS), disk snapshots (Azure/GCP), etc.
+   - Snapshots are **incremental at the storage level**: first snapshot is a full copy; subsequent ones store only changed blocks.
+
+4. **Snapshot storage & redundancy**
+   - Snapshots live in the **same region** as the cluster’s primary; optionally, **multi-region snapshot distribution** replicates them to other regions for DR.
+
+### How restore from a snapshot works – step by step
+
+1. **Choose snapshot & target**
+   - In the Atlas UI / API, you choose:
+     - **Source cluster**  
+     - **Snapshot time** (from the schedule)  
+     - **Target**: same cluster or a different cluster (e.g., test/forensics cluster).
+
+2. **Restore job creation**
+   - Atlas creates a **restore job** that:
+     - Allocates (or reuses) cluster infrastructure.
+     - Attaches cloud snapshots as the initial data volumes.
+
+3. **Cluster brought online**
+   - The restored cluster starts `mongod` on those snapshot volumes.
+   - From the application point of view, you get a cluster whose data is frozen at that snapshot time.
+   - **No writes** allowed to a cluster during restore to avoid inconsistencies.
+
+4. **Result**
+   - You now have a cluster at **exact snapshot time**.  
+   - If you also enabled **Continuous Cloud Backup**, you can further roll this forward to an exact point in time using **oplog replay** (next section).
+
+---
+
+## 2. Atlas Continuous Cloud Backup (Point-in-Time Restore / PITR)
+
+Think of Atlas Continuous Cloud Backup as: **snapshots + continuous oplog capture** stored in object storage.
+
+### Extra components (on top of snapshots)
+
+- **Continuous backup stream**:
+  - Tails the **oplog** from the cluster.
+- **Object storage for oplog**:
+  - AWS S3, Azure Blob, or GCS.
+- **Backup policy with restore window**:
+  - Example: keep last **7 days** of oplog for PITR.
+
+### How continuous backup captures data
+
+1. **Enable continuous backups + restore window**
+   - In the Backup Policy, you turn on **Point in Time Restore** and specify a **Restore Window** (e.g. 7 days).
+   - Atlas starts streaming **oplog entries** from the cluster to object storage, for as long as they fall within the configured window.
+
+2. **Continuous oplog streaming**
+   - Approximately in real time, Atlas copies each new oplog entry from the replica set to **backup storage**.
+   - So at any given moment, you have:
+     - The last **N snapshots** as point-in-time images.
+     - A continuous **oplog window** covering, say, the last 7 days.
+
+3. **Retention / window enforcement**
+   - Atlas enforces two things:
+     - **Snapshot retention** (daily/weekly/monthly rules).
+     - **Oplog retention window** (e.g. 7 days).
+
+### How point-in-time restore (PITR) works in Atlas
+
+Goal: “Recover the cluster as it looked at **T = 2026‑02‑27 10:37:00**”.
+
+1. **Select desired time**
+   - In UI or API, you pick:
+     - **Date & Time** (minute-level granularity), or
+     - **Oplog Timestamp** (second-level granularity).
+
+2. **Atlas decides base snapshot**
+   - Atlas finds the **most recent snapshot** **≤ T** within the continuous backup window.
+
+3. **Create restore job**
+   - Atlas:
+     - Spins up a **temporary restore process** that:
+       1. Attaches that snapshot (exactly as in a snapshot restore).
+       2. **Replays oplog entries** from the snapshot time `Tsnapshot` forward up to the requested time `T`, from oplog records stored in object storage.
+
+4. **Cluster at desired point in time**
+   - The end result is a cluster whose state reflects **all operations between `Tsnapshot` and `T`**.
+   - From JPMC training material: this gives you **RPO ≈ 1 minute** when configured appropriately in Atlas policies, since oplog is continuously captured and can be replayed to within a minute of the incident.
+
+5. **Limitations**
+   - You can only restore within the defined **continuous window** (e.g., last 7 days).
+   - You can’t restore across **MongoDB major-version incompatibilities** (snapshot must come from compatible version; restore is allowed only to same or newer major version).
+
+---
+
+## 3. Ops Manager / Cloud Manager continuous backup (self‑managed)
+
+For self-managed deployments, Ops Manager and Cloud Manager offer a **continuous backup + PITR** model quite similar to Atlas, but with some extra **on-prem components**.
+
+### Components
+
+- **MongoDB Agent with backup enabled** on each server.
+- **Backup Daemon** and **Snapshot Store**:
+  - Responsible for storing backup data and snapshots (often on dedicated storage).
+- **Blockstore**:
+  - Stores **blocks** of snapshot data referenced by snapshots.
+- **Continuous backup job**:
+  - Tails the **oplog** of the replica set or each shard.
+- **MongoDB Backup Restore Utility (MBRU)**:
+  - A command-line tool you run during **PITR restores** to apply oplog to a snapshot.
+
+### “Checkpoint” in Ops/Cloud Manager backup
+
+There are **two “checkpoint” concepts** here:
+
+1. **Snapshot store checkpoint (OS/storage concept)** – not your question.
+2. **Backup “checkpoint token” in the oplog**:
+   - Legacy backup agents for **FCV 4.0 and earlier** write a **small checkpoint document** into the oplog at regular intervals.
+   - Purpose:
+     - Provide a **global marker** across all members/shards for where a backup has “caught up” to.
+     - Useful when building **consistent PITR** across sharded clusters (you can select a checkpoint that exists in all shard oplogs).
+   - These tokens are tiny (≈ <100 bytes) and have negligible impact.
+   - Removed for FCV 4.2+ deployments; PITR is then done without writing explicit tokens.
+
+### How continuous backup works (Ops/Cloud Manager) – step by step
+
+1. **Agent + backup activation**
+   - On each MongoDB host, you:
+     - Install the **MongoDB Agent**.
+     - Activate **Backup** for that agent in the Ops/Cloud Manager UI.
+
+2. **Initial snapshot**
+   - For each replica set or shard:
+     - Ops/Cloud Manager coordinates an **initial full snapshot** of data files to the **Snapshot Store** (using blockstore under the hood).
+   - This is analogous to Atlas’s first snapshot.
+
+3. **Incremental “forever” backups**
+   - After the initial snapshot, the backup system transitions to **continuous mode**:
+     - **Tails oplog** from the primary and writes operations into backup storage.
+     - Periodically creates new **incremental snapshots** by referencing new blocks in the blockstore.
+
+4. **Checkpoints (for older FCV)**
+   - For sharded clusters on FCV 4.0 or earlier:
+     - Backup agents periodically write **checkpoint tokens** into each shard’s oplog.
+     - When you request a point in time backup by **checkpoint**, Ops/Cloud Manager finds the corresponding tokens in all shard oplogs and uses them as the consistent cut point.
+
+5. **Retention policy**
+   - Backup data is governed by:
+     - A **snapshot schedule** (e.g. every 6 hours, retained X days).
+     - A **point‑in‑time window**, typically 24h, within which it can reconstruct **any PIT** by oplog replay.
+
+### How restore from snapshot works (Ops/Cloud Manager)
+
+There are two main models: **simple snapshot restore** and **PIT restore with MBRU**.
+
+#### A. Simple snapshot restore (no PITR)
+
+1. **Select snapshot & target**
+   - In the UI, you choose:
+     - **Deployment** (replica set / sharded cluster).
+     - A particular **snapshot**.
+     - **Restore target** (same cluster or another managed cluster).
+
+2. **Restore job & streaming**
+   - Ops/Cloud Manager:
+     - Creates a **RestoreJob document**.
+     - Streams snapshot data from **Snapshot Store / blockstore** to the target hosts.
+
+3. **Automation swap**
+   - If you choose **automated restore**, Automation:
+     - Stops `mongod` on target.
+     - Replaces data files with restored snapshot files.
+     - Restarts `mongod` with the options captured in `restoreInfo.txt` (e.g., wiredTiger options, encryption, etc.).
+
+4. **Result**
+   - Target deployment is at the exact snapshot time, similar to Atlas snap restore.
+
+#### B. Point-in-time restore (PITR) using MongoDB Backup Restore Utility (MBRU)
+
+This is the **continuous backup equivalent** of Atlas’s PITR.
+
+1. **Create PIT restore in UI**
+   - In Ops/Cloud Manager, you:
+     - Choose a **time** (date/time) or **oplog timestamp**, or for sharded clusters, a **checkpoint**.
+   - The Ops/Cloud Manager server:
+     - Chooses the **latest snapshot** ≤ T.
+     - Constructs a **restore plan**: “snapshot S + oplog from Tsnapshot→T”.
+
+2. **Download MBRU**
+   - From the UI, you download the **MongoDB Backup Restore Utility** binary to the host where restore is being applied.
+
+3. **Start temporary mongod**
+   - You start a temporary `mongod` on an **ephemeral port** using the restored snapshot directory as `--dbpath`, without auth and with TTL monitor disabled:
+   ```bash
+   mongod --port <ephemeralPort> \
+          --dbpath </path/to/snapshot/files> \
+          --setParameter ttlMonitorEnabled=false \
+          --bind_ip <hostname_or_IP>
+   ```
+
+4. **Run MBRU to apply oplog**
+   - You run the **preconfigured command** from Ops/Cloud Manager, e.g.:
+   ```bash
+   ./mongodb-backup-restore-util \
+       --https \
+       --host <targetHost> \
+       --port <ephemeralPort> \
+       --opStart <opLogStartTimeStamp> \
+       --opEnd <opLogEndTimeStamp> \
+       --logFile <path/to/log>
+   ```
+   - MBRU:
+     - Connects to the temporary `mongod` instance.
+     - **Downloads oplog entries** from Backup between `opStart` and `opEnd`.
+     - Applies each operation in order, effectively rolling the snapshot forward to time T.
+
+5. **Shutdown temporary instance**
+   - Once finished, you cleanly shut down the temporary `mongod`:
+   ```bash
+   mongosh --port <ephemeralPort> \
+           --eval "db.getSiblingDB('admin').shutdownServer()"
+   ```
+
+6. **Deploy data to production**
+   - Depending on restore type:
+     - **Automated**: Ops/Cloud Manager will swap in those data files into a managed cluster.
+     - **Manual**: you manually copy the data directory to the final hosts and start `mongod` with the proper configuration.
+
+7. **Result**
+   - Your restored deployment is at the requested **point in time**, not just at snapshot boundary.
+
+---
+
+## 4. Self-managed without Ops Manager (filesystem snapshots / mongodump)
+
+You also sometimes use more “primitive” methods:
+
+1. **Filesystem snapshots**
+   - Use **LVM, EBS, etc.** to take volume snapshots while `mongod` is running (hot backup) or stopped (cold backup).
+   - Requirements:
+     - Journaling enabled, and journal on same volume as data, to guarantee consistency on hot snapshots.
+   - Restore:
+     - Attach snapshot, start `mongod`; journal replays to a consistent point.
+
+2. **mongodump / mongorestore**
+   - `mongodump`: exports **BSON** documents from collections.
+   - `mongorestore`: rebuilds database from BSON files; indexes are rebuilt during restore.
+   - With `--oplog` and `--oplogReplay`, you can get near-point-in-time behavior for a single replica set, but this does **not scale** well to large/sharded deployments and is not a full continuous backup system.
+
+---
+
+## 5. Putting it together – what “we use” in practice
+
+For FSI workloads like JPMC:
+
+- **Atlas clusters (M10+ and above)**:
+  - **Cloud Backup** (scheduled snapshots).
+  - **Continuous Cloud Backup** for **PITR** (RPO ≈ 1 minute) via **oplog replay** over snapshots.
+- **Ops Manager / Cloud Manager (for self-managed)**:
+  - **MongoDB Agent** + **Backup Daemon** + **Snapshot Store / blockstore** for continuous snapshots.
+  - **Oplog streaming** + optional **checkpoint tokens** (older FCVs) for **PITR**.
+  - **MongoDB Backup Restore Utility (MBRU)** to apply oplog to snapshots and reach any requested point in time within the window.
+- **Optional third‑party integrations** via Ops Manager:
+  - e.g. **Cohesity, Rubrik, Nutanix** in environments where central backup teams standardize on those platforms. Ops Manager exposes APIs to put MongoDB clusters into **backup-ready/restore-ready** states; third-party platforms handle data movement & storage.
+
+All of this is built on the same fundamental MongoDB mechanics: **WiredTiger checkpoints + journal for local consistency, replica-set oplog for continuous event stream, and higher-level services that snapshot volumes and store/replay oplog to achieve PITR.**
+
+Would you like a restore playbook, architecture diagram, or example commands for your environment?

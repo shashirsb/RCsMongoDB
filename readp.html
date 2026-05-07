@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Read Preference Lab | LeafyBank FSI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root { 
+            --mongo-green: #00ED64; 
+            --mongo-dark: #001E2B; 
+            --read-blue: #00A3FF;
+            --bg-light: #F9FBFA;
+        }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-light); color: var(--mongo-dark); height: 100vh; overflow: hidden; margin: 0; display: flex; flex-direction: column; }
+        .white-panel { background: white; border: 1px solid #E1E4E8; box-shadow: 0 4px 20px rgba(0,0,0,0.05); border-radius: 1.5rem; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .node-box { border: 2px solid #E1E4E8; transition: all 0.3s ease; position: relative; z-index: 10; border-radius: 1.25rem; width: 260px; background: white; }
+        .node-PRIMARY { border-left: 10px solid var(--mongo-green); background: #f0fff4; }
+        .node-SECONDARY { border-left: 10px solid var(--read-blue); }
+        .node-OFFLINE { opacity: 0.3; filter: grayscale(1); border-left-color: #ef4444 !important; }
+
+        #ping-dot { 
+            width: 16px; height: 16px; 
+            background: var(--read-blue); 
+            border-radius: 50%; 
+            position: absolute; 
+            z-index: 1000;
+            display: none;
+            pointer-events: none;
+            box-shadow: 0 0 15px var(--read-blue);
+            transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
+        }
+
+        .hub-pulse { animation: pulse-anim 0.5s ease-out; }
+        @keyframes pulse-anim {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 237, 100, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 20px 10px rgba(0, 237, 100, 0); border-color: var(--mongo-green); }
+            100% { transform: scale(1); }
+        }
+
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 10px; }
+    </style>
+</head>
+<body class="p-4">
+
+    <div id="ping-dot"></div>
+
+    <header class="flex justify-between items-center mb-4 px-6 bg-white p-4 rounded-3xl border shadow-sm h-24">
+        <div class="flex items-center gap-4">
+            <a href="index.html" class="w-10 h-10 bg-[#00ED64] rounded-xl flex items-center justify-center font-black text-[#001E2B] hover:scale-105 transition">←</a>
+            <div>
+                <h1 class="text-xl font-black uppercase tracking-tighter">Read Preference <span class="text-[#00684A]">Lab</span></h1>
+                <div class="text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-none mt-1">Direct Traffic Simulation</div>
+            </div>
+        </div>
+        <div class="flex items-center gap-4">
+            <div class="flex flex-col border-r pr-6">
+                <label class="text-[8px] font-black text-gray-400 uppercase mb-1">Routing Mode</label>
+                <select id="rp-mode" onchange="updateDoc()" class="text-sm font-bold bg-transparent outline-none cursor-pointer text-blue-600">
+                    <option value="primary">primary</option>
+                    <option value="primaryPreferred">primaryPreferred</option>
+                    <option value="secondary">secondary</option>
+                    <option value="secondaryPreferred">secondaryPreferred</option>
+                    <option value="nearest">nearest</option>
+                </select>
+            </div>
+            <button onclick="executePing()" id="exec-btn" class="bg-[#001E2B] text-white px-10 py-3 rounded-2xl font-black text-xs uppercase hover:bg-black transition shadow-xl">Execute Ping</button>
+        </div>
+    </header>
+
+    <main class="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
+        
+        <div class="col-span-9 flex flex-col h-full overflow-hidden">
+            <div class="flex-1 white-panel p-8 relative flex flex-col items-center justify-center bg-[#FDFDFD]">
+                
+                <div id="app-driver" class="w-80 bg-[#001E2B] border-t-4 border-t-blue-500 rounded-[2rem] p-6 relative z-30 shadow-2xl mb-32">
+                    <div class="flex items-center gap-5">
+                        <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg">App</div>
+                        <div>
+                            <h3 class="text-xs font-black uppercase text-white/50 tracking-widest leading-none">Payments Client</h3>
+                            <div id="routing-status" class="mono text-xs text-[#00ED64] mt-2 italic font-bold leading-none">> IDLE</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="w-full flex justify-around items-start z-10 px-6">
+                    <div id="hub-primary" class="node-box node-PRIMARY p-6 shadow-md cursor-pointer" onclick="toggleNode('primary')">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-[9px] font-black text-green-700 uppercase tracking-widest">us-east-1</span>
+                            <div class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse status-light"></div>
+                        </div>
+                        <div class="text-2xl font-black mono text-[#001E2B]">N1: PRIMARY</div>
+                        <div class="mt-3 text-[10px] font-bold text-gray-400 uppercase">Latency: 5ms</div>
+                    </div>
+
+                    <div id="hub-local" class="node-box node-SECONDARY p-6 shadow-md cursor-pointer" onclick="toggleNode('local')">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-[9px] font-black text-blue-700 uppercase tracking-widest">us-east-1</span>
+                            <div class="w-2.5 h-2.5 rounded-full bg-blue-500 status-light"></div>
+                        </div>
+                        <div class="text-2xl font-black mono text-[#001E2B]">N2: SECONDARY</div>
+                        <div class="mt-3 text-[10px] font-bold text-gray-400 uppercase">Latency: 8ms</div>
+                    </div>
+
+                    <div id="hub-remote" class="node-box node-SECONDARY p-6 shadow-md cursor-pointer border-dashed" onclick="toggleNode('remote')">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-[9px] font-black text-orange-600 uppercase tracking-widest">us-west-2</span>
+                            <div class="w-2.5 h-2.5 rounded-full bg-orange-500 status-light"></div>
+                        </div>
+                        <div class="text-2xl font-black mono text-[#001E2B]">N3: SECONDARY</div>
+                        <div class="mt-3 text-[10px] font-bold text-gray-400 uppercase">Latency: 85ms</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <aside class="col-span-3 flex flex-col h-full gap-4 overflow-hidden">
+            <div class="flex-1 white-panel p-6 flex flex-col overflow-hidden border-t-8 border-t-blue-600">
+                <h3 class="text-xs font-black uppercase text-gray-400 border-b pb-4 mb-6 tracking-widest italic">Routing Telemetry</h3>
+                <div id="log-stream" class="flex-1 overflow-y-auto custom-scroll mono text-[12px] space-y-5 pr-2">
+                    <div class="text-gray-400 italic">Select mode to ping cluster members...</div>
+                </div>
+            </div>
+
+            <div class="bg-[#001E2B] rounded-3xl p-6 text-white border border-white/5">
+                <h3 class="text-[10px] font-black text-[#00ED64] uppercase tracking-widest mb-4">Official Guideline</h3>
+                <div id="doc-text" class="text-[11px] leading-relaxed text-gray-400">
+                    Choose a mode to view its routing characteristics.
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <script>
+        const nodes = {
+            primary: { id: 'hub-primary', online: true, latency: 5, color: 'var(--mongo-green)', type: 'PRIMARY' },
+            local: { id: 'hub-local', online: true, latency: 8, color: 'var(--read-blue)', type: 'SECONDARY' },
+            remote: { id: 'hub-remote', online: true, latency: 85, color: 'var(--read-blue)', type: 'SECONDARY' }
+        };
+
+        const docs = {
+            primary: "<strong>primary:</strong> Reads only from the Primary.",
+            primaryPreferred: "<strong>primaryPreferred:</strong> Prefers Primary, otherwise routes to available Secondaries.",
+            secondary: "<strong>secondary:</strong> Reads only from Secondaries.",
+            secondaryPreferred: "<strong>secondaryPreferred:</strong> Prefers Secondaries, falls back to Primary if no Secondaries are healthy.",
+            nearest: "<strong>nearest:</strong> Routes to the member with the lowest network latency."
+        };
+
+        function updateDoc() {
+            document.getElementById('doc-text').innerHTML = docs[document.getElementById('rp-mode').value];
+        }
+
+        function toggleNode(key) {
+            const node = nodes[key];
+            node.online = !node.online;
+            const el = document.getElementById(node.id);
+            const light = el.querySelector('.status-light');
+            
+            if (!node.online) {
+                el.classList.add('node-OFFLINE');
+                light.style.background = '#ef4444';
+                addLog(`HEALTH: Hub ${key.toUpperCase()} is now OFFLINE.`, 'text-red-500 font-bold');
+            } else {
+                el.classList.remove('node-OFFLINE');
+                light.style.background = node.color;
+                addLog(`HEALTH: Hub ${key.toUpperCase()} joined the cluster.`, 'text-green-500 font-bold');
+            }
+        }
+
+        function executePing() {
+            const mode = document.getElementById('rp-mode').value;
+            const btn = document.getElementById('exec-btn');
+            const status = document.getElementById('routing-status');
+            
+            btn.disabled = true;
+            status.innerText = `> resolving_target(${mode})...`;
+            addLog(`PING_START: Selecting member via "${mode}"`, 'text-blue-500 font-black');
+
+            let targetKey = null;
+
+            // Health-Checked Logic Tree
+            const getOnlineSecondaries = () => Object.keys(nodes).filter(k => nodes[k].type === 'SECONDARY' && nodes[k].online);
+
+            if (mode === 'primary') {
+                if (nodes.primary.online) targetKey = 'primary';
+            } 
+            else if (mode === 'primaryPreferred') {
+                if (nodes.primary.online) targetKey = 'primary';
+                else targetKey = getOnlineSecondaries()[0] || null;
+            } 
+            else if (mode === 'secondary') {
+                targetKey = getOnlineSecondaries()[0] || null;
+            } 
+            else if (mode === 'secondaryPreferred') {
+                const availableSec = getOnlineSecondaries();
+                if (availableSec.length > 0) targetKey = availableSec[0];
+                else if (nodes.primary.online) targetKey = 'primary';
+            } 
+            else if (mode === 'nearest') {
+                const allOnline = Object.keys(nodes).filter(k => nodes[k].online).sort((a,b) => nodes[a].latency - nodes[b].latency);
+                targetKey = allOnline[0] || null;
+            }
+
+            if (targetKey) {
+                animateRequestResponse(targetKey);
+            } else {
+                addLog(`ERROR: No reachable nodes found for "${mode}".`, 'text-red-600 font-bold');
+                status.innerText = `> err: member_unreachable`;
+                btn.disabled = false;
+            }
+        }
+
+        function animateRequestResponse(key) {
+            const dot = document.getElementById('ping-dot');
+            const app = document.getElementById('app-driver').getBoundingClientRect();
+            const hub = document.getElementById(nodes[key].id).getBoundingClientRect();
+            const hubEl = document.getElementById(nodes[key].id);
+
+            const startX = app.left + app.width/2 - 8;
+            const startY = app.bottom - 20;
+            const endX = hub.left + hub.width/2 - 8;
+            const endY = hub.top + 10;
+
+            dot.style.background = nodes[key].color;
+            dot.style.boxShadow = `0 0 15px ${nodes[key].color}`;
+            dot.style.left = `0px`;
+            dot.style.top = `0px`;
+            dot.style.display = 'block';
+            dot.style.opacity = '1';
+            dot.style.transform = `translate(${startX}px, ${startY}px)`;
+
+            setTimeout(() => {
+                dot.style.transform = `translate(${endX}px, ${endY}px)`;
+                addLog(`OUTBOUND: Routing request to ${key.toUpperCase()}`, 'text-blue-400');
+            }, 50);
+
+            setTimeout(() => {
+                hubEl.classList.add('hub-pulse');
+                document.getElementById('routing-status').innerText = `> hub_processing...`;
+                addLog(`IN_FLIGHT: Hub ${key.toUpperCase()} received request.`, 'text-gray-500 italic');
+                
+                setTimeout(() => {
+                    hubEl.classList.remove('hub-pulse');
+                    dot.style.transform = `translate(${startX}px, ${startY}px)`;
+                    addLog(`RESPONSE: Data returning from ${key.toUpperCase()}`, 'text-blue-600 font-bold');
+
+                    setTimeout(() => {
+                        document.getElementById('routing-status').innerText = `> SUCCESS (RTT: ${nodes[key].latency}ms)`;
+                        dot.style.opacity = '0';
+                        addLog(`COMPLETE: Request-Response cycle finished.`, 'text-[#00ED64] font-black border-l-2 pl-3 border-[#00ED64]');
+                        document.getElementById('exec-btn').disabled = false;
+                    }, 800);
+                }, 500);
+            }, 850);
+        }
+
+        function addLog(msg, clr) {
+            const stream = document.getElementById('log-stream');
+            const d = document.createElement('div');
+            d.className = clr + " leading-relaxed mb-4";
+            d.innerHTML = `> [${new Date().toLocaleTimeString()}] ${msg}`;
+            stream.prepend(d);
+        }
+
+        window.onload = updateDoc;
+    </script>
+</body>
+</html>

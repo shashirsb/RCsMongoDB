@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Global Consistency Lab | Full Restored Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root { 
+            --mongo-green: #00ED64; 
+            --mongo-dark: #001E2B; 
+            --border-gray: #E1E4E8;
+            --bg-light: #F9FBFA;
+            --read-blue: #00A3FF;
+        }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-light); color: var(--mongo-dark); margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+        .white-panel { background: white; border: 1px solid var(--border-gray); box-shadow: 0 4px 20px rgba(0,0,0,0.05); border-radius: 1.5rem; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .node-box { transition: all 0.3s ease; border: 1px solid var(--border-gray); position: relative; z-index: 10; border-radius: 1rem; }
+        .node-PRIMARY { border-left: 10px solid var(--mongo-green); background: #f0fff4; }
+        .node-SECONDARY { border-left: 8px solid #CBD5E0; background: white; }
+
+        #connection-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; overflow: visible; }
+        .conn-line { fill: none; stroke: #E1E4E8; stroke-width: 3; stroke-dasharray: 10,6; opacity: 0.5; }
+        .oplog-line { fill: none; stroke: var(--mongo-green); stroke-width: 2; stroke-dasharray: 6,6; opacity: 0.2; }
+        
+        /* CSS Motion Packets */
+        .packet {
+            width: 18px; height: 18px;
+            background-color: var(--mongo-green);
+            border-radius: 50%;
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 100;
+            box-shadow: 0 0 15px var(--mongo-green);
+            display: none;
+            offset-rotate: auto;
+        }
+        .move-down { display: block; animation: flow-down var(--dur) linear forwards; }
+        .move-up { display: block; animation: flow-up var(--dur) linear forwards; }
+
+        @keyframes flow-down {
+            0% { offset-distance: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { offset-distance: 100%; opacity: 0; }
+        }
+        @keyframes flow-up {
+            0% { offset-distance: 100%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { offset-distance: 0%; opacity: 0; }
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+
+    <header class="flex justify-between items-center p-4 px-8 border-b bg-white z-50 shadow-sm">
+        <div class="flex items-center gap-4">
+            <a href="index.html" class="w-12 h-12 bg-[#00ED64] rounded-xl flex items-center justify-center font-black text-[#001E2B] hover:scale-105 transition shadow-md text-xl">←</a>
+            <div>
+                <h1 class="text-2xl font-black tracking-tighter uppercase text-[#001E2B]">Tunable <span class="text-[#00684A]">Consistency</span></h1>
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest italic">Global Consistency Lab | Restored Simulation</div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-4 bg-[#F9FBFA] p-2 px-6 rounded-2xl border border-gray-200">
+            <div class="flex flex-col border-r pr-6">
+                <label class="text-[8px] font-black text-gray-400 uppercase mb-1">Write Concern</label>
+                <select id="w-select" class="text-xs font-bold bg-transparent outline-none">
+                    <option value="majority">w: majority (3 Nodes)</option>
+                    <option value="1">w: 1 (Primary)</option>
+                    <option value="0">w: 0 (Unack)</option>
+                </select>
+            </div>
+            <div class="flex flex-col border-r pr-6 pl-6">
+                <label class="text-[8px] font-black text-gray-400 uppercase mb-1">Read Concern</label>
+                <select id="r-select" class="text-xs font-bold bg-transparent outline-none">
+                    <option value="local">local (Fastest)</option>
+                    <option value="majority">majority (Durable Only)</option>
+                    <option value="linearizable">linearizable (Strict Leader Check)</option>
+                </select>
+            </div>
+            <div class="flex gap-3 pl-4">
+                <button id="insert-btn" onclick="startTransaction('write')" class="bg-[#001E2B] text-[#00ED64] px-6 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-black transition disabled:opacity-30">Insert Record</button>
+                <button id="read-btn" onclick="startTransaction('read')" class="bg-[#00684A] text-white px-6 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-[#004d36] transition disabled:opacity-30">Read Record</button>
+                <button onclick="resetSimulation()" class="border-2 border-[#001E2B] text-[#001E2B] px-6 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-white transition">Reset</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex w-full overflow-hidden relative bg-[#FDFDFD]">
+        <svg id="connection-svg"></svg>
+        <div id="packet-container"></div>
+
+        <section class="w-[75%] flex flex-col p-4 h-full relative overflow-hidden">
+            <div class="flex-1 white-panel p-8 flex flex-col items-center justify-between relative border border-gray-100">
+                
+                <div id="driver-node" class="w-full max-w-3xl bg-[#001E2B] border-t-4 border-t-[#00ED64] rounded-2xl p-6 relative z-30 shadow-2xl mt-4">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-6">
+                            <div id="app-icon" class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg transition-all duration-700">App</div>
+                            <div>
+                                <div id="driver-op-label" class="text-[9px] font-black uppercase text-white/40 tracking-widest leading-none mb-1">Status: Standby</div>
+                                <div id="driver-status" class="mono text-lg text-[#00ED64] font-bold italic">> Awaiting command...</div>
+                            </div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="bg-black/60 px-6 py-3 rounded-xl border border-white/5 text-center">
+                                <div class="text-[9px] text-gray-500 uppercase font-black mb-1">Scaled RTT/10</div>
+                                <div class="text-3xl font-black mono text-white" id="timer">0.00</div>
+                            </div>
+                            <div class="bg-black/60 px-6 py-3 rounded-xl border border-white/5 text-center min-w-[140px]">
+                                <div class="text-[9px] text-gray-500 uppercase font-black mb-1">Quorum Logic</div>
+                                <div id="code-w" class="text-[11px] font-black mono text-yellow-400 italic">Waiting...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="hubs-container" class="w-full flex justify-around items-start gap-4 z-10 px-4 mb-4"></div>
+            </div>
+        </section>
+
+        <aside class="w-[25%] p-6 h-full border-l bg-white flex flex-col overflow-hidden shadow-2xl z-40">
+            <div class="flex justify-between items-center border-b-2 pb-4 mb-6">
+                <h3 class="text-xs font-black uppercase text-gray-400 tracking-widest">Verbose Internal Oplog</h3>
+                <div id="status-bubble" class="w-3 h-3 rounded-full bg-gray-200"></div>
+            </div>
+            
+            <div id="telemetry-log" class="flex-1 overflow-y-auto mono text-[13px] font-medium space-y-5 pr-2 scrollbar-hide">
+                <div class="text-gray-400 italic">Logs active. Select an operation to simulate consistency propagation.</div>
+            </div>
+
+            <div class="mt-8 pt-6 border-t border-gray-100">
+                <div class="flex justify-between items-end mb-3">
+                    <div>
+                        <span class="text-[10px] font-black text-gray-400 uppercase block tracking-widest mb-1">Acknowledge Status</span>
+                        <div id="quorum-composition" class="text-[10px] font-bold text-blue-500"> composición composition... </div>
+                    </div>
+                    <span id="ack-tally" class="text-[12px] font-black text-blue-600">0/0 Nodes</span>
+                </div>
+                <div class="w-full bg-gray-100 h-3 rounded-full overflow-hidden">
+                    <div id="durability-progress" class="h-full bg-[#00ED64] transition-all duration-700" style="width: 0%"></div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <script>
+        const REGIONS = [
+            { id: 'us-east-1', latency: 45, nodes: ['N1 (P)', 'N2'] },
+            { id: 'us-east-2', latency: 165, nodes: ['N3', 'N4'] },
+            { id: 'eu-west-1', latency: 340, nodes: ['N5'] }
+        ];
+
+        let nodes = [];
+        let primaryNode = null;
+        let isSimulating = false;
+
+        function initLayout() {
+            const container = document.getElementById('hubs-container');
+            container.innerHTML = '';
+            nodes = [];
+            REGIONS.forEach((reg, rIdx) => {
+                const regDiv = document.createElement('div');
+                regDiv.className = 'flex-1 flex flex-col gap-4';
+                regDiv.innerHTML = `<div class="text-center"><h4 class="text-[10px] font-black uppercase text-[#001E2B] border-b pb-1 mb-1 inline-block">${reg.id}</h4><div class="text-[9px] font-bold text-gray-400">${reg.latency}ms RTT</div></div>`;
+                const nodeGrid = document.createElement('div');
+                nodeGrid.className = 'flex flex-col gap-2';
+                reg.nodes.forEach((nName, nIdx) => {
+                    const isP = rIdx === 0 && nIdx === 0;
+                    const nodeId = `node-${rIdx}-${nIdx}`;
+                    const nodeObj = { id: nodeId, isPrimary: isP, latency: reg.latency, name: nName };
+                    nodes.push(nodeObj);
+                    if(isP) primaryNode = nodeObj;
+                    nodeGrid.innerHTML += `
+                        <div id="${nodeId}" class="node-box white-panel p-5 ${isP ? 'node-PRIMARY' : 'node-SECONDARY'} shadow-sm">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-[8px] font-black uppercase opacity-40">${isP ? 'Primary' : 'Secondary'}</span>
+                                <div class="w-2 h-2 rounded-full bg-green-400"></div>
+                            </div>
+                            <div class="text-xl font-black mono text-[#001E2B] leading-none">${nName}</div>
+                            <div id="status-${nodeId}" class="mt-2 text-[8px] font-black uppercase text-gray-300 italic">Online</div>
+                        </div>
+                    `;
+                });
+                regDiv.appendChild(nodeGrid); container.appendChild(regDiv);
+            });
+            setTimeout(drawPaths, 200);
+        }
+
+        function drawPaths() {
+            const svg = document.getElementById('connection-svg');
+            svg.innerHTML = '';
+            const driver = document.getElementById('driver-node').getBoundingClientRect();
+            const primaryEl = document.getElementById(primaryNode.id).getBoundingClientRect();
+            const svgRect = svg.getBoundingClientRect();
+            addSVGPath(svg, 'path-main', createPathData(driver, primaryEl, svgRect), 'conn-line');
+            nodes.filter(n => !n.isPrimary).forEach(node => {
+                const secEl = document.getElementById(node.id).getBoundingClientRect();
+                addSVGPath(svg, `path-repl-${node.id}`, createPathData(primaryEl, secEl, svgRect, true), 'oplog-line');
+            });
+        }
+
+        function spawnPacket(pathId, direction, duration, color = 'var(--mongo-green)') {
+            const pathElement = document.getElementById(pathId);
+            if (!pathElement) return;
+            const packet = document.createElement('div');
+            packet.className = 'packet ' + (direction === 'down' ? 'move-down' : 'move-up');
+            packet.style.offsetPath = `path('${pathElement.getAttribute('d')}')`;
+            packet.style.setProperty('--dur', duration + 's');
+            packet.style.backgroundColor = color;
+            packet.style.boxShadow = `0 0 15px ${color}`;
+            document.getElementById('packet-container').appendChild(packet);
+            setTimeout(() => packet.remove(), duration * 1000);
+        }
+
+        async function startTransaction(type) {
+            if(isSimulating) return;
+            isSimulating = true;
+            const wc = document.getElementById('w-select').value;
+            const rc = document.getElementById('r-select').value;
+            const logEl = document.getElementById('telemetry-log');
+            const progress = document.getElementById('durability-progress');
+            const bubble = document.getElementById('status-bubble');
+
+            document.getElementById('insert-btn').disabled = true;
+            document.getElementById('read-btn').disabled = true;
+            logEl.innerHTML = ''; progress.style.width = '0%';
+            bubble.style.backgroundColor = '#3b82f6';
+            let startTime = Date.now();
+
+            if (type === 'write') {
+                const totalReq = wc === 'majority' ? 3 : (wc === '0' ? 0 : parseInt(wc));
+                document.getElementById('driver-op-label').innerText = "State: WRITING";
+                document.getElementById('code-w').innerText = "w:" + wc;
+                document.getElementById('quorum-composition').innerText = wc === 'majority' ? "Requirement: 1 Primary + 2 Secondaries" : "Local Durability Logic";
+                addLog(`WRITE_START: { tx_id: ${Math.floor(Math.random()*10000)}, w: "${wc}" }`, 'text-blue-600 font-bold border-l-4 border-blue-600 pl-2');
+                
+                if(wc === '0') {
+                    spawnPacket('path-main', 'down', 1.5);
+                    addLog(`W:0_LOGIC: Fire & Forget. Not waiting for server reply.`, 'text-orange-500 italic');
+                    finalize(startTime, 'w:0', true);
+                    completeSim();
+                } else {
+                    spawnPacket('path-main', 'down', 1.5);
+                    handleWriteFlow(startTime, wc, totalReq);
+                }
+            } else {
+                document.getElementById('driver-op-label').innerText = "State: READING";
+                document.getElementById('code-w').innerText = "readConcern:" + rc;
+                document.getElementById('quorum-composition').innerText = "Data visibility depends on snapshot age";
+                addLog(`READ_START: { readConcern: "${rc}" }`, 'text-green-600 font-bold border-l-4 border-green-600 pl-2');
+                spawnPacket('path-main', 'down', 1.5, 'var(--read-blue)');
+                handleReadFlow(startTime, rc);
+            }
+        }
+
+        function handleWriteFlow(start, wc, totalReq) {
+            let acks = 0;
+            setTimeout(() => {
+                acks++; updateStats(acks, totalReq);
+                const pEl = document.getElementById(`status-${primaryNode.id}`);
+                pEl.innerText = "DURABLE"; pEl.style.color = "var(--mongo-green)";
+                addLog(`PRIMARY_COMMIT: Record persisted to N1 Storage`, 'text-[#00ED64] font-bold');
+                if(wc === '1') finalize(start, 'w:1');
+                
+                nodes.filter(n => !n.isPrimary).forEach(node => {
+                    const dur = (node.latency / 60) + 1.2;
+                    spawnPacket(`path-repl-${node.id}`, 'down', dur, 'var(--read-blue)');
+                    setTimeout(() => {
+                        const sEl = document.getElementById(`status-${node.id}`);
+                        sEl.innerText = "SYNCED"; sEl.style.color = "var(--mongo-green)";
+                        addLog(`OPLOG_PROPAGATION: Shipping entries to ${node.name}`, 'text-gray-400');
+                        spawnPacket(`path-repl-${node.id}`, 'up', dur, 'var(--read-blue)');
+                        setTimeout(() => {
+                            acks++; updateStats(acks, totalReq);
+                            addLog(`NODE_ACK: Received confirmation from Hub ${node.name}`, 'text-blue-500');
+                            if(acks >= totalReq && wc === 'majority') finalize(start, 'w:majority');
+                            if(acks === nodes.length) completeSim();
+                        }, dur * 1000);
+                    }, dur * 1000);
+                });
+            }, 1500);
+        }
+
+        function handleReadFlow(start, rc) {
+            setTimeout(() => {
+                addLog(`PRIMARY_RECEIVE: Primary Hub processing request...`, 'text-gray-400');
+                if(rc === 'local') {
+                    addLog(`READ_LOCAL: Returning most recent local data snapshot`, 'text-[#00ED64]');
+                    finalize(start, 'rc:local', false, 'var(--read-blue)');
+                    completeSim();
+                } else if(rc === 'majority') {
+                    addLog(`READ_MAJORITY: Verifying Majority-Commit point...`, 'text-blue-500 font-bold');
+                    setTimeout(() => {
+                        addLog(`SNAPSHOT_SCAN: Locating data confirmed by 3/5 nodes`, 'text-gray-400 italic');
+                        setTimeout(() => {
+                            addLog(`READ_MAJORITY: Data found in majority snapshot. Returning.`, 'text-[#00ED64] font-bold');
+                            finalize(start, 'rc:majority', false, 'var(--read-blue)');
+                            completeSim();
+                        }, 1200);
+                    }, 1000);
+                } else if(rc === 'linearizable') {
+                    addLog(`LINEARIZABLE: Checking Primary status across cluster...`, 'text-blue-600 font-black');
+                    nodes.filter(n => !n.isPrimary).forEach(node => {
+                        const dur = 1.0;
+                        spawnPacket(`path-repl-${node.id}`, 'down', dur, 'var(--read-blue)');
+                        setTimeout(() => spawnPacket(`path-repl-${node.id}`, 'up', dur, 'var(--read-blue)'), dur * 1000);
+                    });
+                    setTimeout(() => {
+                        addLog(`LINEARIZABLE: Leadership verified. Read successful.`, 'text-[#00ED64] font-bold');
+                        finalize(start, 'rc:linearizable', false, 'var(--read-blue)');
+                        completeSim();
+                    }, 2800);
+                }
+            }, 1500);
+        }
+
+        function finalize(start, label, immediate = false, color = 'var(--mongo-green)') {
+            if(!immediate) spawnPacket('path-main', 'up', 1.5, color);
+            document.getElementById('driver-status').innerText = `> ${label} SUCCESS`;
+            const val = ((Date.now() - start) / 10).toFixed(2);
+            document.getElementById('timer').innerHTML = val;
+            addLog(`SUCCESS_METRIC: Scaled RTT: ${val}`, 'bg-[#00ED64] text-[#001E2B] px-3 py-1 rounded font-black mt-3 inline-block');
+        }
+
+        function completeSim() {
+            isSimulating = false;
+            document.getElementById('insert-btn').disabled = false;
+            document.getElementById('read-btn').disabled = false;
+            document.getElementById('status-bubble').style.backgroundColor = '#10b981';
+        }
+
+        function updateStats(current, req) {
+            if (req === 0) return;
+            const perc = (current / req) * 100;
+            document.getElementById('durability-progress').style.width = `${Math.min(perc, 100)}%`;
+            document.getElementById('ack-tally').innerText = `${current} / ${req} Nodes`;
+        }
+
+        function resetSimulation() {
+            isSimulating = false; initLayout();
+            document.getElementById('timer').innerText = '0.00';
+            document.getElementById('driver-status').innerText = '> IDLE';
+            document.getElementById('insert-btn').disabled = false;
+            document.getElementById('read-btn').disabled = false;
+            document.getElementById('telemetry-log').innerHTML = '';
+            document.getElementById('durability-progress').style.width = '0%';
+            document.getElementById('status-bubble').style.backgroundColor = '#e5e7eb';
+        }
+
+        function createPathData(el1, el2, svgRect, isRepl = false) {
+            const x1 = el1.left + el1.width/2 - svgRect.left;
+            const y1 = isRepl ? (el1.top + el1.height/2 - svgRect.top) : (el1.bottom - svgRect.top);
+            const x2 = el2.left + el2.width/2 - svgRect.left;
+            const y2 = el2.top + el2.height/2 - svgRect.top;
+            if (isRepl) return `M ${x1} ${y1} Q ${(x1+x2)/2} ${Math.max(y1,y2)+120} ${x2} ${y2}`;
+            return `M ${x1} ${y1} C ${x1} ${y1 + 60}, ${x2} ${y2 - 80}, ${x2} ${y2}`;
+        }
+
+        function addSVGPath(svg, id, d, cls) {
+            const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            p.setAttribute("id", id); p.setAttribute("d", d); p.setAttribute("class", cls);
+            svg.appendChild(p);
+        }
+
+        function addLog(msg, color) {
+            const log = document.getElementById('telemetry-log');
+            const div = document.createElement('div');
+            div.className = color + " leading-relaxed";
+            div.innerHTML = `> [${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}] ${msg}`;
+            log.prepend(div);
+        }
+
+        window.onload = initLayout;
+        window.onresize = drawPaths;
+    </script>
+</body>
+</html>

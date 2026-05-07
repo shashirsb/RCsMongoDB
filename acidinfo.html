@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ACID Deep Dive | The Legacy Cost</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Inter:wght@300;400;600;700;900&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Inter", sans-serif;
+        background-color: #f8fafc;
+        color: #0f172a;
+      }
+      .mono {
+        font-family: "Source Code Pro", monospace;
+      }
+      .syntax-card {
+        background: #001e2b;
+        color: #e8edf2;
+        border-radius: 1.5rem;
+        padding: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .glass-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 2rem;
+        padding: 2.5rem;
+        transition: all 0.3s ease;
+      }
+      .dependency-line {
+        border-left: 2px dashed #ef4444;
+        margin-left: 1rem;
+        padding-left: 1rem;
+        position: relative;
+        padding-bottom: 1rem;
+      }
+      .dependency-line::before {
+        content: "LOCK";
+        position: absolute;
+        left: -10px;
+        top: 0;
+        background: #ef4444;
+        color: white;
+        font-size: 7px;
+        padding: 1px 3px;
+        border-radius: 2px;
+        font-weight: 900;
+      }
+      .table-node {
+        background: #f1f5f9;
+        border: 1px solid #cbd5e0;
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 9px;
+        font-weight: 700;
+        display: flex;
+        justify-content: space-between;
+      }
+    </style>
+  </head>
+  <body class="p-8 md:p-12 lg:p-20">
+    <nav class="max-w-7xl mx-auto flex justify-between items-center mb-12">
+      <a
+        href="index.html"
+        class="flex items-center gap-3 bg-white px-6 py-3 rounded-2xl border border-slate-200 font-bold text-sm hover:bg-slate-50 transition shadow-sm"
+      >
+        <span>←</span> Back to Dashboard
+      </a>
+      <a
+        href="acid.html"
+        class="bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl"
+      >
+        Launch Transaction Simulator →
+      </a>
+    </nav>
+
+    <header class="max-w-7xl mx-auto text-center mb-16">
+      <h1 class="text-6xl font-black tracking-tighter mb-4">
+        Relational <span class="text-red-600">Normalization</span> Cost
+      </h1>
+      <p class="text-slate-500 font-medium">
+        Why 10+ Tables, Triggers, and Stored Procedures make RDBMS rollbacks
+        heavy.
+      </p>
+    </header>
+
+    <div class="max-w-7xl mx-auto glass-card mb-12">
+      <h3
+        class="text-2xl font-black mb-10 border-b pb-4 tracking-tighter italic"
+      >
+        Legacy Oracle Object Map: A Single Payment Flow
+      </h3>
+
+      <div class="grid lg:grid-cols-3 gap-16">
+        <div class="space-y-4">
+          <h4
+            class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4"
+          >
+            12+ Tables Required
+          </h4>
+          <div class="grid gap-2">
+            <div class="table-node">
+              USERS <span class="text-red-500">PK</span>
+            </div>
+            <div class="table-node">
+              ACCOUNTS <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              ACCOUNT_LIMITS <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              LEDGER_DAILY <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              BRANCH_METADATA <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              AUDIT_LOG <span class="text-red-500">IDX</span>
+            </div>
+            <div class="table-node">
+              TRANSACTION_HISTORY <span class="text-red-500">PK</span>
+            </div>
+            <div class="table-node">
+              KYC_VERIFICATION <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              NOTIFICATIONS_QUEUE <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              CURRENCY_EXCHANGE <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              TAX_RECORDS <span class="text-red-500">FK</span>
+            </div>
+            <div class="table-node">
+              SESSION_LOGS <span class="text-red-500">IDX</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-6">
+          <h4
+            class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4"
+          >
+            DB Logic & Side Effects
+          </h4>
+          <div class="dependency-line">
+            <span class="text-[11px] font-black uppercase"
+              >Stored Proc:
+              <span class="text-blue-600">SP_VALIDATE_AND_DEBIT</span></span
+            >
+            <p class="text-[10px] text-slate-500 leading-relaxed mt-1">
+              Orchestrates the 12-table logic. Complexity increases
+              exponentially with every added business rule.
+            </p>
+          </div>
+          <div class="dependency-line">
+            <span class="text-[11px] font-black uppercase"
+              >Trigger:
+              <span class="text-orange-600">TRG_AUTO_AUDIT</span></span
+            >
+            <p class="text-[10px] text-slate-500 leading-relaxed mt-1">
+              Fires on every update to ACCOUNTS. Forces a synchronous write to
+              AUDIT_LOG table before original update finishes.
+            </p>
+          </div>
+          <div class="dependency-line">
+            <span class="text-[11px] font-black uppercase"
+              >Sequence:
+              <span class="text-emerald-600">SEQ_GLOBAL_TX_ID</span></span
+            >
+            <p class="text-[10px] text-slate-500 leading-relaxed mt-1">
+              Shared resource. High contention point for parallel payments.
+            </p>
+          </div>
+        </div>
+
+        <div
+          class="bg-red-50 p-8 rounded-[2rem] border border-red-100 flex flex-col justify-center"
+        >
+          <h4 class="text-sm font-black text-red-700 uppercase mb-4">
+            The Heavy Rollback
+          </h4>
+          <p class="text-xs text-red-800 leading-relaxed mb-6">
+            If a failure occurs at table #10 (Tax Records), Oracle must:
+          </p>
+          <ul class="text-[10px] text-red-900 space-y-3 font-bold">
+            <li class="flex gap-2">
+              <span>1.</span> Reverse the Trigger's Audit Row.
+            </li>
+            <li class="flex gap-2">
+              <span>2.</span> Restore the LEDGER balance from UNDO logs.
+            </li>
+            <li class="flex gap-2">
+              <span>3.</span> Revert the sequence pointer cache.
+            </li>
+            <li class="flex gap-2">
+              <span>4.</span> Traverse 12 physical data files to release row
+              locks.
+            </li>
+          </ul>
+          <div class="mt-8 pt-4 border-t border-red-200">
+            <p
+              class="text-[9px] uppercase tracking-widest text-red-500 text-center font-black"
+            >
+              Performance Impact: High Latency / Low Throughput
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="max-w-7xl mx-auto glass-card border-emerald-100 bg-emerald-50/20 mb-12 shadow-xl"
+    >
+      <div class="flex flex-col lg:grid lg:grid-cols-12 gap-12 items-center">
+        <div class="lg:col-span-5 space-y-6">
+          <div class="oracle-tag mb-4">Legacy Oracle Schema</div>
+          <h3
+            class="text-3xl font-black italic text-slate-900 tracking-tighter"
+          >
+            Fragmented Tables
+          </h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            In RDBMS, data is normalized across disparate files. Moving money
+            requires <strong>joining 5+ table files</strong> and managing 5+
+            separate locks.
+          </p>
+          <div class="grid grid-cols-1 gap-2 opacity-60">
+            <div
+              class="p-2 border border-red-200 bg-white rounded text-[10px] font-bold"
+            >
+              USERS (PK)
+            </div>
+            <div
+              class="p-2 border border-red-200 bg-white rounded text-[10px] font-bold"
+            >
+              ACCOUNTS (FK)
+            </div>
+            <div
+              class="p-2 border border-red-200 bg-white rounded text-[10px] font-bold"
+            >
+              ACCOUNT_LIMITS
+            </div>
+            <div
+              class="p-2 border border-red-200 bg-white rounded text-[10px] font-bold"
+            >
+              KYC_VERIFICATION
+            </div>
+            <div
+              class="p-2 border border-red-200 bg-white rounded text-[10px] font-bold"
+            >
+              TAX_RECORDS
+            </div>
+          </div>
+          <div
+            class="pt-4 flex items-center gap-4 text-red-500 font-black italic"
+          >
+            <span class="text-3xl">→</span>
+            <span class="text-xs uppercase"
+              >Requires Multi-Table Transaction</span
+            >
+          </div>
+        </div>
+
+        <div
+          class="lg:col-span-7 bg-slate-900 rounded-[2.5rem] p-10 text-white shadow-2xl relative overflow-hidden"
+        >
+          <div class="flex justify-between items-center mb-6">
+            <div class="mongo-tag">MongoDB Collection: userAccounts</div>
+            <span class="text-[10px] font-bold text-slate-500 uppercase"
+              >Unified Operational State</span
+            >
+          </div>
+          <pre class="mono text-[11px] leading-relaxed text-emerald-100">
+{
+  "_id": "USR_001",
+  "profile": { "name": "A. Gupta", "kyc_status": "VERIFIED" },
+  "tax_records": { "tin": "XXX-XX-1234", "residency": "IN" },
+  "accounts": [
+    { 
+      "id": "ACC_88", 
+      "balance": 1200.50,
+      "limits": { "daily": 5000, "spent": 250 }
+    }
+  ],
+  "last_updated": "2026-03-02"
+}</pre
+          >
+          <p class="mt-6 text-[10px] text-slate-400 italic">
+            MongoDB unifies these tables into a rich document. Updating a user's
+            balance, daily limit, and tax status happens in
+            <strong>one atomic I/O operation</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto grid lg:grid-cols-2 gap-8 mb-12">
+      <div class="space-y-4">
+        <h3
+          class="text-xs font-black uppercase text-red-500 tracking-widest pl-4"
+        >
+          Oracle PL/SQL (Complex Join & Side Effects)
+        </h3>
+        <div class="syntax-card shadow-2xl">
+   <pre class="mono text-[10px] leading-relaxed bg-[#1A1C1E] text-[#D4D4D4] p-6 rounded-2xl border border-white/5 shadow-2xl">
+CREATE OR REPLACE PROCEDURE sp_complex_bank_transfer(
+    p_sender_id IN VARCHAR2, 
+    p_receiver_id IN VARCHAR2, 
+    p_amount IN NUMBER
+) AS
+    v_daily_spent NUMBER;
+    v_max_limit   NUMBER;
+BEGIN
+    -- 1. Explicit Row Locking (Pessimistic) across Join
+    SELECT l.spent_today, l.daily_limit 
+    INTO v_daily_spent, v_max_limit
+    FROM accounts a
+    JOIN account_limits l ON a.acc_id = l.acc_id
+    WHERE a.acc_id = p_sender_id
+    FOR UPDATE OF a.balance, l.spent_today;
+
+    -- 2. Business Logic Validation within the DB Layer
+    IF (v_daily_spent + p_amount > v_max_limit) THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Daily Limit Exceeded');
+    END IF;
+
+    -- 3. Complex Multi-Table State Update
+    UPDATE (
+        SELECT a.balance, l.spent_today, u.last_activity
+        FROM accounts a
+        JOIN account_limits l ON a.acc_id = l.acc_id
+        JOIN users u ON a.user_id = u.user_id
+        WHERE a.acc_id = p_sender_id
+    ) SET balance = balance - p_amount, 
+          spent_today = spent_today + p_amount,
+          last_activity = SYSDATE;
+
+    -- 4. Audit Trail with Sequence & Trigger dependencies
+    INSERT INTO audit_log (log_id, acc_id, action, amount, branch_code)
+    VALUES (seq_global_tx.NEXTVAL, p_sender_id, 'TRANSFER_OUT', p_amount, 
+           (SELECT branch_id FROM branches WHERE is_active = 'Y' AND rownum = 1));
+
+    -- 5. Global Ledger Reconciliation
+    UPDATE ledger SET total_reserve = total_reserve - p_amount 
+    WHERE currency_type = 'USD' AND status = 'OPEN';
+
+    COMMIT; -- All locks released only at this point
+EXCEPTION 
+    WHEN OTHERS THEN
+        ROLLBACK; -- Every row in Audit, Ledger, and Accounts must be physically reverted
+        RAISE;
+END;
+</pre>
+        </div>
+        <p class="text-[10px] text-slate-500 italic px-4">
+          Result: 4 Table locks, 1 Sequence increment, and 1 Undo segment entry.
+        </p>
+      </div>
+      <div class="space-y-4">
+        <h3
+          class="text-xs font-black uppercase text-emerald-500 tracking-widest pl-4"
+        >
+          MongoDB withTransaction (Atomic Document Update)
+        </h3>
+        <div class="syntax-card shadow-2xl">
+        <pre class="mono text-[10px] leading-relaxed bg-[#001E2B] text-[#E8EDF2] p-6 rounded-2xl border border-white/10 shadow-2xl">
+const session = client.startSession();
+session.startTransaction();
+
+try {
+  // 1. Operational Update: Unified User & Account State
+  await userAccounts.updateOne(
+    { _id: 'U1' }, 
+    { $inc: { balance: -200, "limits.daily_rem": -200 } }, 
+    { session }
+  );
+
+  // 2. Telemetry: Immediate Audit Log
+  await auditLogs.insertOne(
+    { tx_id: 'TX_99', acc_id: 'U1', action: 'DEBIT', ts: new Date() }, 
+    { session }
+  );
+
+  // 3. System State: Branch Ledger Sync
+  await ledger.updateOne(
+    { branch_id: 'B01' },
+    { $inc: { total_assets: -200 } },
+    { session }
+  );
+
+  // 4. Persistence: Atomic Multi-Doc Commit
+  await session.commitTransaction();
+} catch (error) {
+  // 5. Resilience: Full Rollback on Failure
+  await session.abortTransaction();
+} finally {
+  session.endSession();
+}
+</pre>
+        </div>
+        <p class="text-[10px] text-emerald-700/60 font-medium italic px-4">
+          Result: Single Document Lock. Optimized for high-throughput
+          concurrency.
+        </p>
+      </div>
+    </div>
+
+    <div
+      class="max-w-7xl mx-auto glass-card mb-20 overflow-hidden border-blue-100 bg-slate-50/50 shadow-2xl relative p-12"
+    >
+      <div
+        class="flex flex-col md:flex-row justify-between items-end mb-16 border-b border-slate-200 pb-8"
+      >
+        <div class="max-w-xl">
+          <div
+            class="inline-block px-3 py-1 bg-blue-600 text-white text-[9px] font-black uppercase rounded mb-3 shadow-lg"
+          >
+            Event-Driven Pipeline
+          </div>
+          <h3
+            class="text-4xl font-black italic tracking-tighter mb-2 text-slate-900"
+          >
+            Modern Payment Lifecycle
+          </h3>
+          <p class="text-slate-500 text-sm">
+            Decoupled sub-services running on <strong>Docker</strong>,
+            orchestrated by <strong>Kafka</strong>.
+          </p>
+        </div>
+        <div class="text-right">
+          <div
+            class="text-[9px] font-black text-slate-400 uppercase tracking-widest"
+          >
+            Persistence Layer
+          </div>
+          <div class="text-lg font-black text-emerald-500">MONGODB ATLAS</div>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-12 relative">
+        <div
+          class="w-full bg-slate-900 p-8 rounded-[2.5rem] shadow-2xl border-4 border-slate-800 relative group"
+        >
+          <div class="flex items-center justify-between mb-6 px-4">
+            <div class="flex items-center gap-4">
+              <div
+                class="w-3 h-3 rounded-full bg-orange-500 animate-ping"
+              ></div>
+              <span
+                class="text-orange-400 font-black text-xs italic tracking-widest uppercase"
+                >Kafka Event Manager (The Top)</span
+              >
+            </div>
+            <span
+              class="text-slate-500 text-[9px] font-bold uppercase tracking-widest"
+              >Broker Cluster Active</span
+            >
+          </div>
+          <div class="grid grid-cols-3 gap-4">
+            <div
+              class="bg-white/5 border border-white/10 p-3 rounded-xl text-center"
+            >
+              <div class="text-[9px] text-slate-400 font-black uppercase mb-1">
+                Topic: payment.init
+              </div>
+              <div class="text-emerald-400 mono text-[10px]">
+                { "id": "TX_99", "status": "PENDING" }
+              </div>
+            </div>
+            <div
+              class="bg-white/5 border border-white/10 p-3 rounded-xl text-center opacity-50"
+            >
+              <div class="text-[9px] text-slate-400 font-black uppercase mb-1">
+                Topic: fraud.verified
+              </div>
+            </div>
+            <div
+              class="bg-white/5 border border-white/10 p-3 rounded-xl text-center opacity-50"
+            >
+              <div class="text-[9px] text-slate-400 font-black uppercase mb-1">
+                Topic: ledger.done
+              </div>
+            </div>
+          </div>
+          <div
+            class="absolute -bottom-12 left-1/2 -translate-x-1/2 text-slate-300 font-black text-2xl"
+          >
+            ↓
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-4 gap-6 pt-4">
+          <div
+            class="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-md flex flex-col items-center text-center relative group transition-all hover:border-blue-500"
+          >
+            <div
+              class="absolute -top-3 bg-white text-white p-1.5 rounded-lg shadow-lg"
+            >
+              <img
+                src="docker.png"
+                class="w-5 h-5 object-contain"
+                alt="Docker Logo"
+              />
+            </div>
+            <h4 class="font-black text-[10px] uppercase mt-4 mb-2">
+              Debit-Worker
+            </h4>
+            <div
+              class="bg-blue-50 px-3 py-1 rounded-full text-[8px] font-black text-blue-600 mb-3"
+            >
+              INGESTING: {doc}
+            </div>
+            <p class="text-[9px] text-slate-500 leading-relaxed italic">
+              Validates User A balance and initiates transfer.
+            </p>
+            <div class="mt-4 text-slate-300">↓</div>
+          </div>
+
+          <div
+            class="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-md flex flex-col items-center text-center relative group transition-all hover:border-blue-500"
+          >
+            <div
+              class="absolute -top-3 bg-white text-white p-1.5 rounded-lg shadow-lg"
+            >
+              <img
+                src="docker.png"
+                class="w-5 h-5 object-contain"
+                alt="Docker Logo"
+              />
+            </div>
+            <h4 class="font-black text-[10px] uppercase mt-4 mb-2">
+              Fraud-Worker
+            </h4>
+            <div
+              class="bg-blue-50 px-3 py-1 rounded-full text-[8px] font-black text-blue-600 mb-3"
+            >
+              INGESTING: {doc}
+            </div>
+            <p class="text-[9px] text-slate-500 leading-relaxed italic">
+              Runs AI scanning to detect risk before credit.
+            </p>
+            <div class="mt-4 text-slate-300">↓</div>
+          </div>
+
+          <div
+            class="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-md flex flex-col items-center text-center relative group transition-all hover:border-blue-500"
+          >
+            <div
+              class="absolute -top-3 bg-white text-white p-1.5 rounded-lg shadow-lg"
+            >
+              <img
+                src="docker.png"
+                class="w-5 h-5 object-contain"
+                alt="Docker Logo"
+              />
+            </div>
+            <h4 class="font-black text-[10px] uppercase mt-4 mb-2">
+              Ledger-Worker
+            </h4>
+            <div
+              class="bg-blue-50 px-3 py-1 rounded-full text-[8px] font-black text-blue-600 mb-3"
+            >
+              INGESTING: {doc}
+            </div>
+            <p class="text-[9px] text-slate-500 leading-relaxed italic">
+              Updates double-entry accounting records.
+            </p>
+            <div class="mt-4 text-slate-300">↓</div>
+          </div>
+
+          <div
+            class="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-md flex flex-col items-center text-center relative group transition-all hover:border-blue-500"
+          >
+            <div
+              class="absolute -top-3 bg-white text-white p-1.5 rounded-lg shadow-lg"
+            >
+              <img
+                src="docker.png"
+                class="w-5 h-5 object-contain"
+                alt="Docker Logo"
+              />
+            </div>
+            <h4 class="font-black text-[10px] uppercase mt-4 mb-2">
+              Notify-Worker
+            </h4>
+            <div
+              class="bg-blue-50 px-3 py-1 rounded-full text-[8px] font-black text-blue-600 mb-3"
+            >
+              INGESTING: {doc}
+            </div>
+            <p class="text-[9px] text-slate-500 leading-relaxed italic">
+              Triggers SMS/Push alert to Customer.
+            </p>
+            <div class="mt-4 text-slate-300">↓</div>
+          </div>
+        </div>
+
+        <div
+          class="w-full p-10 bg-white border-2 border-emerald-500 rounded-[3rem] shadow-2xl flex flex-col items-center relative group"
+        >
+          <div
+            class="absolute -top-3 bg-white text-white p-1.5 rounded-lg shadow-lg"
+          >
+            <img
+              src="docker.png"
+              class="w-5 h-5 object-contain"
+              alt="Docker Logo"
+            />
+          </div>
+          <h4 class="text-sm font-black uppercase mb-4 mt-6">
+            MongoDB Atlas (Persistence)
+          </h4>
+          <div class="grid grid-cols-2 gap-8 w-full max-w-2xl">
+            <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+              <span
+                class="text-[9px] font-black text-emerald-600 block uppercase mb-1"
+                >Source of Truth</span
+              >
+              <p class="text-[10px] text-slate-500 italic">
+                Central repository for all payment states. High availability
+                across 3 nodes.
+              </p>
+            </div>
+            <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+              <span
+                class="text-[9px] font-black text-emerald-600 block uppercase mb-1"
+                >Change Stream Feed</span
+              >
+              <p class="text-[10px] text-slate-500 italic">
+                Emits Oplog events back to Kafka for the next stage in the
+                lifecycle.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-4xl font-black mb-8 italic">
+        Do you still need to do a transaction?
+      </h2>
+      <div class="grid md:grid-cols-2 gap-8 text-left mb-16">
+        <div
+          class="p-8 bg-emerald-50 rounded-[2.5rem] border border-emerald-100"
+        >
+          <h4 class="font-bold text-emerald-900 mb-2">Cross-Document (YES)</h4>
+          <p class="text-[11px] text-emerald-800/70 leading-relaxed">
+            Required when moving data between
+            <strong>independent entities</strong> (e.g., User A to User B).
+            Ensures consistency across the replica set.
+          </p>
+        </div>
+        <div class="p-8 bg-slate-100 rounded-[2.5rem] border border-slate-200">
+          <h4 class="font-bold text-slate-900 mb-2">Intra-Document (NO)</h4>
+          <p class="text-[11px] text-slate-500 leading-relaxed">
+            Updates within a <strong>single user context</strong> are already
+            atomic. Transactions here add unnecessary overhead to your
+            application.
+          </p>
+        </div>
+      </div>
+
+      <a
+        href="acid.html"
+        class="inline-flex items-center gap-6 bg-slate-900 hover:bg-[#00ED64] hover:text-black text-white px-20 py-6 rounded-[3rem] font-black text-sm uppercase transition-all shadow-2xl group"
+      >
+        Open Transaction Simulator
+        <span class="text-xl group-hover:translate-x-3 transition-transform"
+          >→</span
+        >
+      </a>
+    </div>
+  </body>
+</html>

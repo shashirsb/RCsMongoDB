@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LeafyBank | Advanced DR Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root { --mongo-green: #00ED64; --mongo-dark: #001E2B; --border: #E8EDEB; --blue-action: #016BFF; }
+        body { font-family: 'Inter', sans-serif; background-color: #F9FBFA; color: var(--mongo-dark); height: 100vh; overflow: hidden; margin: 0; display: flex; flex-direction: column; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .white-panel { background: white; border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,30,43,0.05); border-radius: 2rem; transition: all 0.5s ease; }
+        
+        .node-box { border: 2px solid #E8EDEB; border-radius: 1.5rem; transition: all 0.5s ease; width: 260px; background: white; position: relative; }
+        .node-secondary { border-left: 8px solid var(--mongo-green); background: #f0fff4; }
+        
+        /* Node Offline State */
+        .region-down { filter: grayscale(1) brightness(0.4); opacity: 0.7; pointer-events: none; }
+        .status-red { background-color: #ff4b4b !important; box-shadow: 0 0 10px #ff4b4b !important; }
+
+        .cache-block { height: 35px; background: #F3F4F6; border-radius: 10px; overflow: hidden; position: relative; border: 1px solid #E5E7EB; }
+        .cache-fill { height: 100%; width: 100%; background: var(--mongo-green); transition: width 1.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        .oplog-packet { width: 10px; height: 10px; background: var(--blue-action); border-radius: 50%; position: absolute; z-index: 100; filter: drop-shadow(0 0 6px var(--blue-action)); }
+
+        .ebs-label { background: #1A202C; color: #718096; padding: 10px; font-size: 10px; text-align: center; border-radius: 0 0 1.5rem 1.5rem; font-weight: bold; }
+        .shaking { animation: h-shake 0.15s infinite; border-color: #F56565 !important; }
+        @keyframes h-shake { 0% { transform: translateX(0); } 50% { transform: translateX(2px); } 100% { transform: translateX(0); } }
+
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 10px; }
+
+        #pitr-fill { height: 100%; background: var(--mongo-green); width: 0%; transition: width 0.1s linear; border-radius: 10px; }
+        .latest-snap { border-color: var(--mongo-green) !important; background: #f0fff4 !important; box-shadow: 0 0 15px rgba(0,237,100,0.3); }
+
+        .oplog-frag { transition: all 0.4s ease; border-radius: 4px; }
+        .oplog-highlight { background: var(--mongo-green) !important; box-shadow: 0 0 8px var(--mongo-green); transform: scale(1.3); z-index: 10; }
+    </style>
+</head>
+<body class="p-4">
+
+    <header class="flex justify-between items-center mb-4 px-4 bg-white p-4 rounded-3xl border shadow-sm h-24">
+        <div class="flex items-center gap-6">
+            <a href="index.html" class="w-10 h-10 bg-[#00ED64] rounded-xl flex items-center justify-center font-black text-[#001E2B] hover:scale-105 transition shadow-sm text-lg">←</a>
+            <div class="flex items-center gap-4 border-l pl-6 border-gray-200">
+                <div class="w-12 h-12 bg-[#001E2B] rounded-xl flex items-center justify-center font-black text-[#00ED64]">DR</div>
+                <div>
+                    <h1 class="text-xl font-black uppercase tracking-tighter">Resilience <span class="text-[#00684A]">Lab</span></h1>
+                    <div class="text-[9px] font-bold text-gray-400 uppercase tracking-widest italic">Full Region Blackout & Recovery Simulation</div>
+                </div>
+            </div>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="triggerFullBackup()" id="backup-btn" class="bg-[#001E2B] text-[#00ED64] px-6 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-black transition">Take Snapshot</button>
+            <button onclick="initiateDR()" id="dr-btn" class="bg-red-600 text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-red-800 transition shadow-lg">Simulate DR</button>
+            <button onclick="location.reload()" class="border-2 border-gray-200 px-6 py-2.5 rounded-xl font-bold text-xs uppercase hover:bg-white transition">Reset</button>
+        </div>
+    </header>
+
+    <main class="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
+        
+        <div class="col-span-9 flex flex-col h-full overflow-hidden gap-4">
+            <div id="main-canvas" class="flex-1 white-panel p-6 relative flex flex-col justify-between overflow-hidden bg-[#FAFAFA]">
+                
+                <div class="grid grid-cols-2 gap-8 w-full z-20">
+                    <div id="region-1-zone" class="region-zone border-2 border-dashed border-gray-200 rounded-[2.5rem] p-6 bg-slate-50/50 grid grid-cols-2 gap-4 relative transition-all duration-700">
+                        <div class="absolute -top-3 left-8 bg-white border px-3 py-0.5 rounded-full text-[9px] font-black uppercase text-gray-400">us-east-1 (Primary)</div>
+                        <div id="node-n1" class="node-box opacity-50 w-full">
+                            <div class="p-3 border-b flex justify-between items-center"><span class="text-[9px] font-black uppercase">N1: Primary</span><div id="n1-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div></div>
+                            <div class="p-4"><div class="cache-block"><div class="cache-fill" style="width: 80%"></div></div></div>
+                        </div>
+                        <div id="node-n2" class="node-box node-secondary shadow-lg w-full">
+                            <div class="p-3 border-b bg-green-50 flex justify-between items-center"><span class="text-[9px] font-black text-green-700 uppercase">N2: Secondary</span><div id="n2-dot" class="w-2 h-2 rounded-full bg-green-600"></div></div>
+                            <div class="p-4 space-y-2">
+                                <div class="cache-block"><div id="cache-n2" class="cache-fill"></div></div>
+                                <div id="n2-task" class="text-[9px] font-bold text-blue-600 uppercase text-center mono">Syncing Oplog</div>
+                            </div>
+                            <div id="n2-center" class="absolute top-1/2 left-1/2"></div>
+                        </div>
+                    </div>
+
+                    <div id="region-2-zone" class="region-zone border-2 border-dashed border-gray-200 rounded-[2.5rem] p-6 bg-slate-50/50 flex justify-center items-center relative transition-all duration-700">
+                        <div class="absolute -top-3 left-8 bg-white border px-3 py-0.5 rounded-full text-[9px] font-black uppercase text-gray-400">eu-west-1 (Passive)</div>
+                        <div id="node-n3" class="node-box node-secondary opacity-60">
+                            <div class="p-3 border-b bg-green-50 flex justify-between items-center"><span class="text-[9px] font-black text-green-700 uppercase">N3: Secondary</span><div id="n3-dot" class="w-2 h-2 rounded-full bg-green-600"></div></div>
+                            <div class="p-4 text-center italic text-[9px] text-gray-400 py-6">Cross-Region Sync</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="recovery-console" class="hidden w-full bg-[#001E2B] rounded-3xl p-6 text-white border border-white/10 z-30">
+                    <div class="grid grid-cols-3 gap-8">
+                        <div class="border-r border-white/10">
+                            <span class="text-[9px] font-black text-red-500 uppercase tracking-widest block mb-1">Incident Time (T-DR)</span>
+                            <div id="dr-time-display" class="text-xl font-black mono">00:00:00</div>
+                        </div>
+                        <div class="border-r border-white/10">
+                            <span class="text-[9px] font-black text-blue-400 uppercase tracking-widest block mb-1">Base Source (T-Snap)</span>
+                            <div id="base-snap-display" class="text-xl font-black mono">None</div>
+                        </div>
+                        <div>
+                            <span class="text-[9px] font-black text-[#00ED64] uppercase tracking-widest block mb-1">Dynamic Replay Delta</span>
+                            <div id="replay-minutes-display" class="text-xl font-black mono text-[#00ED64]">0s</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="w-full grid grid-cols-2 gap-8 mt-4 z-10 px-6">
+                    <div class="flex flex-col items-center">
+                        <div class="text-[9px] font-black text-gray-400 uppercase mb-2 tracking-widest">EBS Checkpoint Service</div>
+                        <div id="ebs-snapshots" class="w-full h-28 bg-gray-100 rounded-3xl border-2 border-dashed flex items-center justify-start px-6 gap-4 overflow-x-auto custom-scroll">
+                            <div class="text-gray-400 text-[9px] italic">No EBS base snapshots found...</div>
+                        </div>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="text-[9px] font-black text-gray-400 uppercase mb-2 tracking-widest">Continuous S3 Oplog Stream</div>
+                        <div id="s3-bucket" class="w-full h-28 bg-[#001E2B] rounded-3xl p-4 relative overflow-hidden shadow-xl">
+                            <div id="s3-content" class="flex flex-wrap gap-1.5 opacity-60"></div>
+                            <div id="pitr-scan-line" class="hidden absolute top-0 left-0 w-1 h-full bg-[#00ED64] shadow-[0_0_15px_#00ED64] z-20"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="pitr-meter" class="hidden w-full bg-white border-2 border-blue-100 p-4 rounded-3xl shadow-xl mt-2">
+                    <div class="flex justify-between text-[10px] font-black uppercase mb-2">
+                        <span id="pitr-step-label">Initializing Recovery...</span>
+                        <span id="pitr-perc">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                        <div id="pitr-fill"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <aside class="col-span-3 flex flex-col h-full gap-4 overflow-hidden">
+            <div class="flex-1 white-panel p-6 flex flex-col overflow-hidden border-t-8 border-t-blue-600">
+                <h3 class="text-xs font-black uppercase text-gray-400 border-b pb-4 mb-4 tracking-tighter">DR Telemetry Stream</h3>
+                <div id="log-stream" class="flex-1 overflow-y-auto custom-scroll mono text-[12px] space-y-4 pr-2">
+                    <div class="text-blue-500 font-bold border-l-2 pl-3 border-blue-500 leading-tight">> [SYSTEM] Multi-region topology verified.</div>
+                </div>
+            </div>
+            <div class="bg-[#001E2B] rounded-3xl p-6 text-white shadow-2xl">
+                <h3 class="text-[10px] font-black text-[#00ED64] uppercase tracking-widest mb-2">Cluster Status</h3>
+                <div id="sys-status" class="text-lg font-black mono text-blue-400">NOMINAL</div>
+            </div>
+        </aside>
+    </main>
+
+    <script>
+        let snapshots = [];
+        let isSimulating = false;
+        let isDisaster = false;
+        let totalFragmentsShipped = 0;
+        let fragmentsSinceLastSnap = 0;
+
+        function streamOplog() {
+            if (isSimulating || isDisaster) return;
+            const start = document.getElementById('n2-center').getBoundingClientRect();
+            const end = document.getElementById('s3-bucket').getBoundingClientRect();
+            const dot = document.createElement('div');
+            dot.className = 'oplog-packet';
+            dot.style.left = start.left + 'px'; dot.style.top = start.top + 'px';
+            document.body.appendChild(dot);
+            const tx = (end.left + (end.width/2)) - start.left;
+            const ty = (end.top + 30) - start.top;
+            dot.animate([{ transform: 'translate(0,0)', opacity: 0 }, { opacity: 1, offset: 0.2 }, { transform: `translate(${tx}px, ${ty}px)`, opacity: 0 }], { duration: 2000, easing: 'ease-in-out' });
+            setTimeout(() => { dot.remove(); addS3Fragment(); }, 2000);
+        }
+        setInterval(streamOplog, 1000);
+
+        function addS3Fragment() {
+            const container = document.getElementById('s3-content');
+            const frag = document.createElement('div');
+            frag.id = `frag-${totalFragmentsShipped}`;
+            frag.className = 'oplog-frag w-1.5 h-3 bg-blue-500 rounded-full shrink-0';
+            container.prepend(frag);
+            totalFragmentsShipped++;
+            fragmentsSinceLastSnap++;
+            if(container.children.length > 200) container.lastChild.remove();
+        }
+
+        async function triggerFullBackup() {
+            const btn = document.getElementById('backup-btn');
+            const cache = document.getElementById('cache-n2');
+            btn.disabled = true;
+            addLog('SNAPSHOT: Checkpointing WiredTiger dirty pages...', 'text-green-600 font-black');
+            document.getElementById('node-n2').classList.add('shaking');
+            cache.style.width = '0%';
+            await new Promise(r => setTimeout(r, 2000));
+            document.getElementById('node-n2').classList.remove('shaking');
+            
+            const container = document.getElementById('ebs-snapshots');
+            if(snapshots.length === 0) container.innerHTML = '';
+            document.querySelectorAll('.snapshot-card').forEach(c => c.classList.remove('latest-snap'));
+
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+            fragmentsSinceLastSnap = 0;
+            snapshots.push({time: timeStr, date: now});
+
+            const snap = document.createElement('div');
+            snap.className = 'snapshot-card w-20 h-20 bg-white border-2 border-gray-300 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-lg latest-snap';
+            snap.innerHTML = `<span class="text-[8px] font-black text-blue-600 uppercase text-center">EBS Base</span><span class="text-xs font-black mt-1">${timeStr}</span>`;
+            container.prepend(snap);
+            
+            addLog(`SUCCESS: Snapshot created at ${timeStr}.`, 'text-green-600 font-bold');
+            cache.style.width = '100%';
+            btn.disabled = false;
+        }
+
+        async function initiateDR() {
+            if(snapshots.length === 0) { alert("Baseline required. Take a snapshot first!"); return; }
+            
+            isDisaster = true;
+            isSimulating = true;
+            
+            // UI BLACKOUT
+            document.getElementById('region-1-zone').classList.add('region-down');
+            document.getElementById('region-2-zone').classList.add('region-down');
+            document.getElementById('n1-dot').className = "w-2 h-2 rounded-full status-red";
+            document.getElementById('n2-dot').className = "w-2 h-2 rounded-full status-red";
+            document.getElementById('n3-dot').className = "w-2 h-2 rounded-full status-red";
+            document.getElementById('sys-status').innerText = "OFFLINE";
+            document.getElementById('sys-status').className = "text-lg font-black mono text-red-500 animate-pulse";
+            document.getElementById('dr-btn').disabled = true;
+            document.getElementById('backup-btn').disabled = true;
+
+            addLog('CRITICAL: HEARTBEAT LOST. Region blackout detected.', 'text-white bg-red-600 px-2 rounded font-black');
+            
+            await new Promise(r => setTimeout(r, 2000));
+            addLog('DR_ENGINE: Launching PITR process...', 'text-blue-500 font-bold');
+            runPITR();
+        }
+
+        async function runPITR() {
+            const disasterTime = new Date();
+            const latestSnap = snapshots[snapshots.length - 1];
+            const diffSecs = Math.floor((disasterTime - latestSnap.date) / 1000);
+            
+            const consoleBox = document.getElementById('recovery-console');
+            consoleBox.classList.remove('hidden');
+            document.getElementById('dr-time-display').innerText = disasterTime.toLocaleTimeString();
+            document.getElementById('base-snap-display').innerText = latestSnap.time;
+            document.getElementById('replay-minutes-display').innerText = `${diffSecs}s Delta`;
+
+            const meter = document.getElementById('pitr-meter');
+            const fill = document.getElementById('pitr-fill');
+            const label = document.getElementById('pitr-step-label');
+            const perc = document.getElementById('pitr-perc');
+            
+            meter.classList.remove('hidden');
+            label.innerText = "STEP 1: MOUNTING LAST KNOWN GOOD EBS SNAPSHOT...";
+            
+            let p = 0;
+            const interval1 = setInterval(() => {
+                p += 2; fill.style.width = p + '%'; perc.innerText = p + '%';
+                if(p >= 100) {
+                    clearInterval(interval1);
+                    addLog(`RECOVERY: Snapshot ${latestSnap.time} attached to standby node.`, 'text-blue-500');
+                    startPhase2();
+                }
+            }, 40);
+
+            function startPhase2() {
+                p = 0; fill.style.width = '0%';
+                label.innerText = `STEP 2: REPLAYING S3 OPLOG FRAGMENTS (+${diffSecs}s)...`;
+                const scanLine = document.getElementById('pitr-scan-line');
+                scanLine.classList.remove('hidden');
+                
+                const fragments = Array.from(document.getElementById('s3-content').querySelectorAll('.oplog-frag'));
+                const replayCount = Math.min(fragments.length, fragmentsSinceLastSnap);
+
+                scanLine.animate([{ left: '0%' }, { left: '100%' }], { duration: 4000 });
+
+                const interval2 = setInterval(() => {
+                    p += 1; fill.style.width = p + '%'; perc.innerText = p + '%';
+                    const highlightUpTo = Math.floor((p / 100) * replayCount);
+                    for(let i = 0; i < highlightUpTo; i++) {
+                        if(fragments[i]) fragments[i].classList.add('oplog-highlight');
+                    }
+                    if(p >= 100) { clearInterval(interval2); finalizeRecovery(); }
+                }, 40);
+            }
+
+            function finalizeRecovery() {
+                // SYSTEM RECOVERY - BRING LIGHTS BACK
+                document.getElementById('region-1-zone').classList.remove('region-down');
+                document.getElementById('region-2-zone').classList.remove('region-down');
+                document.getElementById('n1-dot').className = "w-2 h-2 rounded-full bg-green-500 animate-pulse";
+                document.getElementById('n2-dot').className = "w-2 h-2 rounded-full bg-green-600";
+                document.getElementById('n3-dot').className = "w-2 h-2 rounded-full bg-green-600";
+                
+                document.getElementById('pitr-scan-line').classList.add('hidden');
+                document.getElementById('sys-status').innerText = "RECOVERED";
+                document.getElementById('sys-status').className = "text-lg font-black mono text-[#00ED64]";
+                
+                addLog('PITR_SUCCESS: Cluster recovered and consistent.', 'text-green-600 font-black border-l-4 pl-4 border-green-600');
+                
+                setTimeout(() => {
+                    isSimulating = false;
+                    isDisaster = false;
+                    document.getElementById('dr-btn').disabled = false;
+                    document.getElementById('backup-btn').disabled = false;
+                }, 2000);
+            }
+        }
+
+        function addLog(msg, colorClass) {
+            const stream = document.getElementById('log-stream');
+            const entry = document.createElement('div');
+            entry.className = `${colorClass} border-l-2 pl-3 border-current leading-relaxed mb-4`;
+            entry.innerHTML = `> [${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}] ${msg}`;
+            stream.prepend(entry);
+        }
+
+        window.onload = () => { document.getElementById('cache-n2').style.width = '100%'; };
+    </script>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FSI Payments Processing - Resilience Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Inter:wght@300;400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Inter", sans-serif;
+        background-color: #f9fbfa;
+      }
+      .card-hover:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 24px rgba(0, 30, 43, 0.1);
+      }
+      .glass-nav {
+        background: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid #e8edeb;
+      }
+    </style>
+  </head>
+  <body class="text-[#1C2D24]">
+    <nav class="glass-nav sticky top-0 z-50 px-6 py-4">
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="flex items-center space-x-2">
+          <div
+            class="w-8 h-8 bg-[#00ED64] rounded-md flex items-center justify-center"
+          >
+            <span class="text-[#001E2B] font-bold">L</span>
+          </div>
+          <span class="text-xl font-bold tracking-tight text-[#001E2B]"
+            >MongoDB<span class="font-light"></span>
+            <span class="text-gray-400 font-normal"> for FSI</span></span
+          >
+        </div>
+        <div
+          class="hidden md:flex space-x-8 text-sm font-semibold text-[#001E2B]"
+        >
+          <a href="#" class="hover:text-[#00684A]">Dashboard</a>
+          <a href="#" class="hover:text-[#00684A]">Transactions</a>
+          <a href="#" class="text-[#00684A] border-b-2 border-[#00ED64] pb-1"
+            >Resilience</a
+          >
+        </div>
+        <button
+          class="bg-[#00684A] text-white px-5 py-2 rounded-full text-sm font-bold hover:bg-[#00593f] transition shadow-md"
+        >
+          Contact MongoDB Team
+        </button>
+      </div>
+    </nav>
+
+    <header class="max-w-7xl mx-auto px-6 pt-16 pb-12">
+      <h1 class="text-4xl md:text-5xl font-bold text-[#001E2B] mb-4">
+        MongoDB Infrastructure <span class="text-[#00684A]">for FSI</span>
+      </h1>
+      <p class="text-lg text-gray-600 max-w-2xl">
+        Monitor and manage your high-availability payment clusters. Ensure
+        zero-data loss with automated failover, tunable consistency, and
+        point-in-time recovery.
+      </p>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 pb-20">
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div
+          class="card-hover bg-white border border-[#E8EDEB] rounded-2xl p-8 transition-all duration-300 flex flex-col h-full"
+        >
+          <div class="flex items-start justify-between mb-6">
+            <div class="p-3 bg-[#E1F2FF] rounded-lg">
+              <svg
+                class="w-8 h-8 text-[#016BFF]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                />
+              </svg>
+            </div>
+            <span
+              class="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full uppercase tracking-wider"
+              >Enterprise</span
+            >
+          </div>
+          <h2 class="text-2xl font-bold text-[#001E2B] mb-3">
+            High Resilience
+          </h2>
+          <p class="text-gray-500 mb-6 leading-relaxed flex-grow">
+            Zero-downtime processing via multi-region clusters. Self-healing
+            nodes with Raft-based automated elections.
+          </p>
+          <div class="space-y-3 mb-8">
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Sub-5s automatic failover
+            </div>
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Global distributed hubs
+            </div>
+          </div>
+          <a
+            href="failover.html"
+            class="block w-full text-center border-2 border-[#00684A] text-[#00684A] font-bold py-3 rounded-lg hover:bg-[#F0FAF7] transition"
+          >
+            Failover Simulator
+          </a>
+        </div>
+
+        <div
+          class="card-hover bg-white border border-[#E8EDEB] rounded-2xl p-8 transition-all duration-300 flex flex-col h-full border-t-4 border-t-[#00ED64]"
+        >
+          <div class="flex items-start justify-between mb-6">
+            <div class="p-3 bg-[#F0FAF7] rounded-lg">
+              <svg
+                class="w-8 h-8 text-[#00684A]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                />
+              </svg>
+            </div>
+            <span
+              class="px-3 py-1 bg-[#F0FAF7] text-[#00684A] text-xs font-bold rounded-full uppercase tracking-wider border border-[#00ED64]/20"
+              >Tunable</span
+            >
+          </div>
+          <h2 class="text-2xl font-bold text-[#001E2B] mb-3">
+            Tunable Durability
+          </h2>
+          <p class="text-gray-500 mb-6 leading-relaxed flex-grow">
+            Configure how many nodes must acknowledge a payment before it's
+            confirmed. Balance speed against data integrity.
+          </p>
+          <div class="space-y-3 mb-8">
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              w:majority acknowledgment
+            </div>
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Causal Consistency support
+            </div>
+          </div>
+          <a
+            href="wrconcern.html"
+            class="block w-full text-center border-2 border-[#00684A] text-[#00684A] font-bold py-3 rounded-lg hover:bg-[#F0FAF7] transition"
+          >
+            Consistency Lab
+          </a>
+        </div>
+
+        <div
+          class="card-hover bg-white border border-[#E8EDEB] rounded-2xl p-8 transition-all duration-300 flex flex-col h-full border-b-4 border-b-[#00A3FF]"
+        >
+          <div class="flex items-start justify-between mb-6">
+            <div class="p-3 bg-[#E1F2FF] rounded-lg">
+              <svg
+                class="w-8 h-8 text-[#016BFF]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                />
+              </svg>
+            </div>
+            <span
+              class="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded-full uppercase tracking-wider"
+              >Routing</span
+            >
+          </div>
+          <h2 class="text-2xl font-bold text-[#001E2B] mb-3">
+            Read Preference
+          </h2>
+          <p class="text-gray-500 mb-6 leading-relaxed flex-grow">
+            Describe how clients route read operations to replica set members.
+            Scale reads across global regions or maintain strict primary
+            consistency.
+          </p>
+          <div class="space-y-3 mb-8">
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00A3FF] mr-2"></div>
+              Nearest (Latency-based)
+            </div>
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00A3FF] mr-2"></div>
+              SecondaryPreferred (Scale)
+            </div>
+          </div>
+          <a
+            href="readp.html"
+            class="block w-full text-center border-2 border-[#016BFF] text-[#016BFF] font-bold py-3 rounded-lg hover:bg-[#F0F7FF] transition"
+          >
+            Traffic Simulator
+          </a>
+        </div>
+
+        <div
+          class="card-hover bg-white border border-[#E8EDEB] rounded-2xl p-8 transition-all duration-300 flex flex-col h-full"
+        >
+          <div class="flex items-start justify-between mb-6">
+            <div class="p-3 bg-[#E3FCF7] rounded-lg">
+              <svg
+                class="w-8 h-8 text-[#00684A]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 7v10c0 1.1.9 2 2 2h12a2 2 0 002-2V7M4 7a2 2 0 012-2h12a2 2 0 012 2M4 7l8 5 8-5M12 12v6m0 0l-3-3m3 3l3-3"
+                />
+              </svg>
+            </div>
+            <span
+              class="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full uppercase tracking-wider"
+              >Active</span
+            >
+          </div>
+          <h2 class="text-2xl font-bold text-[#001E2B] mb-3">
+            Backup & Restore
+          </h2>
+          <p class="text-gray-500 mb-6 leading-relaxed flex-grow">
+            Continuous cloud backups with 2-second RPO. Protect against
+            accidental deletions or site-wide regional outages.
+          </p>
+          <div class="space-y-3 mb-8">
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Point-in-time recovery (PITR)
+            </div>
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Cross-region snapshot replication
+            </div>
+          </div>
+          <a
+            href="bnr.html"
+            class="block w-full text-center border-2 border-[#00684A] text-[#00684A] font-bold py-3 rounded-lg hover:bg-[#F0FAF7] transition"
+          >
+            Continuous Recovery
+          </a>
+        </div>
+
+        <div
+          class="card-hover bg-white border border-[#E8EDEB] rounded-2xl p-8 transition-all duration-300 flex flex-col h-full border-t-4 border-t-[#001E2B]"
+        >
+          <div class="flex items-start justify-between mb-6">
+            <div class="p-3 bg-slate-100 rounded-lg">
+              <svg
+                class="w-8 h-8 text-[#001E2B]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                />
+              </svg>
+            </div>
+            <span
+              class="px-3 py-1 bg-slate-100 text-[#001E2B] text-xs font-bold rounded-full uppercase tracking-wider"
+              >Concurrency</span
+            >
+          </div>
+          <h2 class="text-2xl font-bold text-[#001E2B] mb-3">
+            Locking Strategies
+          </h2>
+          <p class="text-gray-500 mb-6 leading-relaxed flex-grow">
+            Manage race conditions in high-concurrency payment flows. Compare
+            version-check patterns against exclusive document-level locks.
+          </p>
+          <div class="space-y-3 mb-8">
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#001E2B] mr-2"></div>
+              Optimistic (Version tracking)
+            </div>
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#001E2B] mr-2"></div>
+              Pessimistic (Exclusive Write-Locks)
+            </div>
+          </div>
+          <a
+            href="lock.html"
+            class="block w-full text-center border-2 border-[#001E2B] text-[#001E2B] font-bold py-3 rounded-lg hover:bg-slate-50 transition"
+          >
+            Concurrency Lab
+          </a>
+        </div>
+
+        <div
+          class="card-hover bg-white border border-[#E8EDEB] rounded-2xl p-8 transition-all duration-300 flex flex-col h-full border-t-4 border-t-[#00ED64]"
+        >
+          <div class="flex items-start justify-between mb-6">
+            <div class="p-3 bg-[#F0FAF7] rounded-lg">
+              <svg
+                class="w-8 h-8 text-[#00684A]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                />
+              </svg>
+            </div>
+            <span
+              class="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full uppercase tracking-wider"
+              >Atomic</span
+            >
+          </div>
+          <h2 class="text-2xl font-bold text-[#001E2B] mb-3">
+            ACID Compliance
+          </h2>
+          <p class="text-gray-500 mb-6 leading-relaxed flex-grow">
+            Execute multi-document transactions with snapshot isolation.
+            Guarantee data integrity for complex multi-stage payment transfers.
+          </p>
+          <div class="space-y-3 mb-8">
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Multi-document ACID transactions
+            </div>
+            <div class="flex items-center text-sm text-gray-600">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#00ED64] mr-2"></div>
+              Snapshot Isolation
+            </div>
+          </div>
+          <a
+            href="acidinfo.html"
+            class="block w-full text-center border-2 border-[#00684A] text-[#00684A] font-bold py-3 rounded-lg hover:bg-[#F0FAF7] transition"
+          >
+            Transaction Lab
+          </a>
+        </div>
+      </div>
+    </main>
+
+    <section class="max-w-7xl mx-auto px-6 pb-20">
+      <div
+        class="bg-[#001E2B] rounded-xl p-6 shadow-2xl overflow-hidden border border-white/10"
+      >
+        <div class="flex space-x-2 mb-4">
+          <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+          <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
+          <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+        </div>
+        <code class="font-mono text-sm text-[#00ED64]">
+          <p>// Cluster Health Payload</p>
+          <p class="text-white">
+            db.payments.stats({ resilience: "enabled" });
+          </p>
+          <p class="text-gray-400 mt-2">{</p>
+          <p class="text-gray-400 ml-4">
+            "status": <span class="text-[#00ED64]">"HEALTHY"</span>,
+          </p>
+          <p class="text-gray-400 ml-4">
+            "consistency": <span class="text-[#00ED64]">"MAJORITY"</span>,
+          </p>
+          <p class="text-gray-400 ml-4">"replicationLag": "0.00ms",</p>
+          <p class="text-gray-400 ml-4">"activeNodes": 3</p>
+          <p class="text-gray-400">}</p>
+        </code>
+      </div>
+    </section>
+  </body>
+</html>

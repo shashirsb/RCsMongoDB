@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Global Resilience Lab - Full Topology Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root { 
+            --mongo-green: #00ED64; 
+            --mongo-dark: #001E2B; 
+            --border-gray: #E1E4E8;
+            --bg-light: #F9FBFA;
+            --elect-blue: #00A3FF;
+            --read-orange: #FFA500;
+        }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-light); color: var(--mongo-dark); overflow: hidden; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .white-panel { background: white; border: 1px solid var(--border-gray); box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+        
+        .node-box { transition: all 0.3s ease; border: 1px solid var(--border-gray); position: relative; z-index: 10; }
+        .node-PRIMARY { border-left: 6px solid var(--mongo-green); background: #f0fff4; }
+        .node-SECONDARY { border-left: 6px solid #CBD5E0; }
+        .node-OFFLINE { opacity: 0.3; background: #f7fafc; filter: grayscale(1); border-left: 6px solid #e53e3e; transform: scale(0.95); }
+
+        .progress-bar { height: 6px; background: #edf2f7; width: 100%; border-radius: 10px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--mongo-green); width: 0%; transition: width 0.1s linear; }
+
+        #connection-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; }
+        .conn-line { fill: none; stroke: #cfd4db; stroke-width: 2; stroke-dasharray: 6,4; opacity: 0.8; transition: all 0.5s ease; }
+        .oplog-line { fill: none; stroke: var(--mongo-green); stroke-width: 1.5; stroke-dasharray: 4,4; opacity: 0.4; }
+
+        .traffic-dot { r: 7; opacity: 0; offset-rotate: 0deg; transition: fill 0.3s ease; }
+        .animate-comm { animation: request-response 1.8s infinite ease-in-out; }
+
+        .oplog-dot { r: 3.5; fill: var(--mongo-green); filter: drop-shadow(0 0 3px var(--mongo-green)); }
+        .animate-oplog { animation: oplog-flow 1.2s infinite linear; }
+
+        @keyframes request-response {
+            0% { offset-distance: 0%; opacity: 0; }
+            5% { opacity: 1; }
+            45% { offset-distance: 100%; }
+            55% { offset-distance: 100%; }
+            95% { offset-distance: 0%; opacity: 1; }
+            100% { offset-distance: 0%; opacity: 0; }
+        }
+
+        @keyframes oplog-flow {
+            0% { offset-distance: 0%; opacity: 0; }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { offset-distance: 100%; opacity: 0; }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col p-8">
+
+    <header class="flex justify-between items-center mb-6">
+        <div class="flex items-center gap-6">
+            <a href="failover.html" class="w-10 h-10 bg-[#00ED64] rounded-xl flex items-center justify-center font-black text-[#001E2B] hover:scale-105 transition shadow-sm text-lg">←</a>
+            
+            <div class="flex items-center gap-4 border-l pl-6 border-gray-200">
+                <div class="w-12 h-12 bg-[#001E2B] rounded-xl flex items-center justify-center font-black text-[#00ED64]">M</div>
+                <div>
+                    <h1 class="text-2xl font-black tracking-tighter text-[#001E2B] uppercase">Resilience <span class="text-[#00684A]">Lab</span></h1>
+                    <div class="text-xs font-bold text-gray-400 uppercase tracking-widest italic leading-none">Multi-Region Quorum Simulator</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <div id="reconfig-alert" class="hidden flex items-center gap-2 bg-amber-50 border border-amber-200 px-4 py-2 rounded-lg animate-pulse">
+                <span class="text-amber-700 text-[10px] font-bold uppercase">Consensus Intervention</span>
+                <button onclick="forceReconfig()" class="bg-amber-600 text-white px-3 py-1 rounded text-[10px] font-black uppercase">Force Reconfig</button>
+            </div>
+            <select id="topology-select" onchange="init()" class="bg-white border-2 border-gray-200 px-4 py-2 rounded-xl text-xs font-black uppercase outline-none focus:border-green-500 transition shadow-sm">
+                <option value="single_three">1 Region (3 Nodes)</option>
+                <option value="two_three">2 Regions (2+1 Pattern)</option>
+                <option value="two_five">2 Regions (3+2 Pattern)</option>
+                <option value="three_three" selected>3 Regions (1-1-1 Pattern)</option>
+                <option value="three_five">3 Regions (2-2-1 Pattern)</option>
+            </select>
+            <button onclick="init()" class="border-2 border-[#001E2B] text-[#001E2B] px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-[#001E2B] hover:text-white transition">Reset</button>
+        </div>
+    </header>
+
+    <main class="flex-1 grid grid-cols-12 gap-8 overflow-hidden relative">
+        <svg id="connection-svg">
+            <path id="active-path" class="conn-line" d="" />
+            <circle id="moving-dot" class="traffic-dot" />
+        </svg>
+
+        <div class="col-span-9 flex flex-col gap-6">
+            <div class="flex-1 white-panel rounded-3xl p-10 relative flex flex-col items-center">
+                <div id="driver-node" class="w-full max-w-3xl mb-16 bg-gray-50 border border-blue-200 rounded-2xl p-6 relative z-20">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div id="app-icon" class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">App</div>
+                            <div>
+                                <h3 class="text-xs font-black uppercase tracking-widest text-blue-600 leading-none mb-1">MongoDB Driver</h3>
+                                <div id="driver-state" class="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Status: Active Traffic</div>
+                            </div>
+                        </div>
+                        <div id="driver-console" class="flex-1 mx-6 bg-gray-900 rounded-xl px-4 py-2 mono text-[10px] text-green-400 h-10 flex items-center border border-gray-800 shadow-inner">
+                            > cluster_connected: true
+                        </div>
+                        <div id="retry-badge" class="hidden bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase animate-bounce border border-blue-200">Retry</div>
+                    </div>
+                </div>
+                <div id="region-container" class="w-full flex justify-around items-start gap-8 z-10"></div>
+            </div>
+
+            <div class="h-28 white-panel rounded-3xl p-8 flex flex-col justify-center">
+                <div class="flex justify-between text-[10px] font-black text-gray-400 uppercase mb-3 tracking-widest">
+                    <span id="state-label">Consensus Healthy</span>
+                    <span id="timer-display">Election Window: 5.0s</span>
+                </div>
+                <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+            </div>
+        </div>
+
+        <div class="col-span-3 flex flex-col gap-6 text-xs">
+            <div id="quorum-card" class="white-panel rounded-3xl p-6 border-l-8 border-l-[#00ED64] transition-all">
+                <div class="text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Write Logic</div>
+                <div class="text-3xl font-black mono text-[#001E2B]" id="write-status">ENABLED</div>
+                <hr class="my-4">
+                <div class="flex justify-between font-bold">
+                    <span class="text-gray-400 uppercase text-[9px]">Quorum Visibility</span>
+                    <span id="node-tally" class="mono text-[#00684A]">0 / 0 Nodes</span>
+                </div>
+            </div>
+            <div class="flex-1 white-panel rounded-3xl p-6 flex flex-col overflow-hidden">
+                <div class="text-xs font-black uppercase text-gray-400 mb-4 border-b pb-2 tracking-widest">Oplog Telemetry</div>
+                <div id="log-window" class="flex-1 overflow-auto mono text-[10px] space-y-3 pr-2 scrollbar-hide"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const TOPOLOGIES = {
+            single_three: [ { name: 'us-east-1', id: 'r1', nodes: ['N1', 'N2', 'N3'] } ],
+            two_three: [ { name: 'Region 1 (Primary)', id: 'r1', nodes: ['N1', 'N2'] }, { name: 'Region 2 (Recovery)', id: 'r2', nodes: ['N3'] } ],
+            two_five: [ { name: 'Region 1 (Primary)', id: 'r1', nodes: ['N1', 'N2', 'N3'] }, { name: 'Region 2 (Recovery)', id: 'r2', nodes: ['N4', 'N5'] } ],
+            three_three: [ { name: 'Region 1', id: 'r1', nodes: ['N1'] }, { name: 'Region 2', id: 'r2', nodes: ['N2'] }, { name: 'Region 3', id: 'r3', nodes: ['N3'] } ],
+            three_five: [ { name: 'Region 1', id: 'r1', nodes: ['N1', 'N2'] }, { name: 'Region 2', id: 'r2', nodes: ['N3', 'N4'] }, { name: 'Region 3', id: 'r3', nodes: ['N5'] } ]
+        };
+
+        let nodes = [];
+        let isElecting = false;
+        let majoritySize = 0;
+
+        function init() {
+            nodes = [];
+            const topoKey = document.getElementById('topology-select').value;
+            const topo = TOPOLOGIES[topoKey];
+            const container = document.getElementById('region-container');
+            container.innerHTML = '';
+            document.querySelectorAll('.oplog-path, .oplog-dot').forEach(el => el.remove());
+
+            topo.forEach(reg => {
+                const regDiv = document.createElement('div');
+                regDiv.className = 'flex flex-col items-center gap-6 flex-1 max-w-[30%]';
+                regDiv.innerHTML = `<div class="text-center w-full"><h4 class="text-[10px] font-black uppercase text-[#001E2B] mb-2 truncate border-b pb-1">${reg.name}</h4><button onclick="killRegion('${reg.id}')" class="w-full bg-red-50 text-red-600 border border-red-200 py-1 rounded-lg text-[8px] font-bold uppercase hover:bg-red-600 hover:text-white transition shadow-sm">Kill Hub</button></div><div class="flex flex-col gap-4 w-full px-2" id="nodes-${reg.id}"></div>`;
+                container.appendChild(regDiv);
+                
+                reg.nodes.forEach((id) => {
+                    const node = { id, role: (id === 'N1' ? 'PRIMARY' : 'SECONDARY'), status: 'ACTIVE', region: reg.id };
+                    nodes.push(node);
+                    const nDiv = document.createElement('div');
+                    nDiv.id = `node-${id}`;
+                    nDiv.className = `node-box white-panel p-4 rounded-xl node-${node.role} cursor-pointer hover:shadow-lg`;
+                    nDiv.onclick = () => toggleNode(id);
+                    nDiv.innerHTML = `<div class="flex justify-between items-center mb-1"><span class="text-[8px] font-black uppercase role-tag">${node.role}</span><div class="w-1.5 h-1.5 rounded-full bg-green-400 status-dot"></div></div><div class="text-sm font-black mono">${id}</div>`;
+                    document.getElementById(`nodes-${reg.id}`).appendChild(nDiv);
+                });
+            });
+            majoritySize = Math.floor(nodes.length / 2) + 1;
+            updateStats();
+            log("Cluster initialized with " + nodes.length + " nodes.", "var(--mongo-dark)");
+            setTimeout(drawConnections, 100);
+        }
+
+        function drawConnections() {
+            const driver = document.getElementById('driver-node');
+            const primaryNode = nodes.find(n => n.role === 'PRIMARY' && n.status === 'ACTIVE');
+            const targetNode = primaryNode || nodes.find(n => n.status === 'ACTIVE');
+            const svg = document.getElementById('connection-svg');
+            const mainPath = document.getElementById('active-path');
+            const mainDot = document.getElementById('moving-dot');
+
+            document.querySelectorAll('.oplog-path, .oplog-dot').forEach(el => el.remove());
+
+            if (!targetNode || !driver) {
+                mainPath.setAttribute('d', ''); mainDot.style.display = 'none'; return;
+            }
+
+            const targetEl = document.getElementById(`node-${targetNode.id}`);
+            const dR = driver.getBoundingClientRect();
+            const tR = targetEl.getBoundingClientRect();
+            const sR = svg.getBoundingClientRect();
+
+            const x1 = dR.left + dR.width / 2 - sR.left;
+            const y1 = dR.bottom - sR.top;
+            const x2 = tR.left + tR.width / 2 - sR.left;
+            const y2 = tR.top + tR.height / 2 - sR.top;
+
+            const d = `M ${x1} ${y1} C ${x1} ${y1 + 40}, ${x2} ${y2 - 60}, ${x2} ${y2}`;
+            mainPath.setAttribute('d', d);
+            mainDot.style.display = 'block';
+            mainDot.style.offsetPath = `path('${d}')`;
+            
+            const aliveCount = nodes.filter(n => n.status === 'ACTIVE').length;
+            mainDot.style.fill = isElecting ? 'var(--elect-blue)' : (aliveCount >= majoritySize && primaryNode ? 'var(--mongo-green)' : 'var(--read-orange)');
+
+            if (primaryNode) {
+                nodes.filter(n => n.status === 'ACTIVE' && n.role !== 'PRIMARY').forEach(sec => {
+                    const secEl = document.getElementById(`node-${sec.id}`);
+                    const secR = secEl.getBoundingClientRect();
+                    const sx1 = tR.left + tR.width / 2 - sR.left;
+                    const sy1 = tR.top + tR.height / 2 - sR.top;
+                    const sx2 = secR.left + secR.width / 2 - sR.left;
+                    const sy2 = secR.top + secR.height / 2 - sR.top;
+                    const controlY = Math.max(sy1, sy2) + 120; 
+                    const opPathD = `M ${sx1} ${sy1} Q ${(sx1 + sx2) / 2} ${controlY} ${sx2} ${sy2}`;
+                    const opPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    opPath.setAttribute("class", "oplog-line oplog-path");
+                    opPath.setAttribute("d", opPathD);
+                    svg.appendChild(opPath);
+                    const opDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    opDot.setAttribute("class", "oplog-dot animate-oplog");
+                    opDot.style.offsetPath = `path('${opPathD}')`;
+                    svg.appendChild(opDot);
+                });
+            }
+        }
+
+        function triggerPing() {
+            const dot = document.getElementById('moving-dot');
+            const aliveCount = nodes.filter(n => n.status === 'ACTIVE').length;
+            const consoleEl = document.getElementById('driver-console');
+            const driverState = document.getElementById('driver-state');
+
+            if (aliveCount === 0) {
+                consoleEl.innerHTML = `<span class="text-red-500">> NoServerSelectionException: cluster_down</span>`;
+                driverState.innerText = "STATUS: CRITICAL EXCEPTION";
+                return;
+            }
+
+            dot.classList.remove('animate-comm');
+            void dot.offsetWidth; 
+            dot.classList.add('animate-comm');
+            
+            const primary = nodes.find(n => n.role === 'PRIMARY' && n.status === 'ACTIVE');
+            if (isElecting) {
+                consoleEl.innerHTML = `<span style="color: var(--elect-blue)">> retryable_write: buffering...</span>`;
+            } else if (primary && aliveCount >= majoritySize) {
+                consoleEl.innerHTML = `<span class="text-green-400">> insert({id: ${Math.floor(Math.random()*10000)}}) committed</span>`;
+            } else if (aliveCount >= majoritySize && !primary) {
+                consoleEl.innerHTML = `<span class="text-blue-400">> failover: resolving_new_primary</span>`;
+            } else {
+                consoleEl.innerHTML = `<span style="color: var(--read-orange)">> fallback: read_only_mode (no_quorum)</span>`;
+            }
+        }
+
+        function toggleNode(id) {
+            const n = nodes.find(x => x.id === id);
+            n.status = (n.status === 'ACTIVE' ? 'OFFLINE' : 'ACTIVE');
+            log("Node " + id + " state changed to " + n.status, n.status === 'ACTIVE' ? "var(--mongo-green)" : "#e53e3e");
+            if (n.role === 'PRIMARY' && n.status === 'OFFLINE') triggerFailover();
+            updateStats();
+        }
+
+        function killRegion(rid) {
+            nodes.filter(n => n.region === rid).forEach(n => n.status = 'OFFLINE');
+            log("Region " + rid + " shutdown triggered.", "#e53e3e");
+            if (nodes.find(n => n.role === 'PRIMARY' && n.status === 'OFFLINE')) triggerFailover();
+            updateStats();
+        }
+
+        function triggerFailover() {
+            if (isElecting) return;
+            isElecting = true;
+            let p = 0;
+            document.getElementById('state-label').innerText = "PRIMARY LOST - ELECTION IN PROGRESS";
+            log("Primary hub unreachable. Quorum gathering votes...", "var(--elect-blue)");
+            const timer = setInterval(() => {
+                p += 2; document.getElementById('progress-fill').style.width = p + '%';
+                if (p >= 100) { clearInterval(timer); runElection(); }
+            }, 50);
+        }
+
+        function runElection() {
+            const alive = nodes.filter(n => n.status === 'ACTIVE');
+            if (alive.length < majoritySize) { 
+                isElecting = false; 
+                log("Election failed: Quorum not met.", "var(--read-orange)");
+                updateStats(); 
+                return; 
+            }
+            nodes.forEach(n => n.role = 'SECONDARY');
+            const winner = alive[0]; winner.role = 'PRIMARY';
+            isElecting = false;
+            document.getElementById('progress-fill').style.width = '0%';
+            log("New Primary elected: " + winner.id, "var(--mongo-green)");
+            updateStats();
+        }
+
+        function updateStats() {
+            const activeNodes = nodes.filter(n => n.status === 'ACTIVE');
+            const activeCount = activeNodes.length;
+            const hasQuorum = activeCount >= majoritySize;
+            const primary = activeNodes.find(n => n.role === 'PRIMARY');
+            
+            document.getElementById('node-tally').innerText = `${activeCount} / ${nodes.length} Hubs`;
+            const writeStatus = document.getElementById('write-status');
+            const quorumCard = document.getElementById('quorum-card');
+            const appIcon = document.getElementById('app-icon');
+            const alertBox = document.getElementById('reconfig-alert');
+
+            if (activeCount === 0) {
+                writeStatus.innerText = "OFFLINE";
+                quorumCard.style.borderLeftColor = "#ff4b4b";
+                appIcon.style.backgroundColor = "#ff4b4b";
+                alertBox.classList.add('hidden');
+            } else if (hasQuorum && primary) {
+                writeStatus.innerText = "ENABLED";
+                quorumCard.style.borderLeftColor = "var(--mongo-green)";
+                appIcon.style.backgroundColor = "#2563eb";
+                alertBox.classList.add('hidden');
+            } else if (hasQuorum && !primary) {
+                writeStatus.innerText = "ELECTING...";
+                quorumCard.style.borderLeftColor = "var(--elect-blue)";
+                appIcon.style.backgroundColor = "var(--elect-blue)";
+                alertBox.classList.add('hidden');
+            } else {
+                writeStatus.innerText = "READ-ONLY";
+                quorumCard.style.borderLeftColor = "var(--read-orange)";
+                appIcon.style.backgroundColor = "var(--read-orange)";
+                if (activeCount > 0) alertBox.classList.remove('hidden');
+            }
+
+            if (hasQuorum && !primary && !isElecting) triggerFailover();
+
+            nodes.forEach(n => {
+                const el = document.getElementById(`node-${n.id}`);
+                el.className = `node-box white-panel p-4 rounded-xl node-${n.status === 'OFFLINE' ? 'OFFLINE' : n.role}`;
+                el.querySelector('.role-tag').innerText = n.status === 'OFFLINE' ? 'DOWN' : n.role;
+                el.querySelector('.status-dot').style.backgroundColor = (n.status === 'ACTIVE' ? '#48bb78' : '#ff4b4b');
+            });
+
+            drawConnections();
+        }
+
+        function forceReconfig() {
+            majoritySize = Math.floor(nodes.filter(n => n.status === 'ACTIVE').length / 2) + 1;
+            log("Forced reconfiguration: Quorum size adjusted to " + majoritySize, "var(--read-orange)");
+            if (!nodes.find(n => n.role === 'PRIMARY' && n.status === 'ACTIVE')) runElection();
+            updateStats();
+        }
+
+        function log(msg, color) {
+            const div = document.createElement('div');
+            div.className = "pl-3 border-l-2"; div.style.borderColor = color;
+            div.innerHTML = `<span class="opacity-40">[${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}]</span> <span style="color: ${color}">${msg}</span>`;
+            const window = document.getElementById('log-window');
+            window.prepend(div);
+        }
+
+        window.onload = () => { init(); setInterval(triggerPing, 2000); };
+        window.onresize = drawConnections;
+    </script>
+</body>
+</html>
